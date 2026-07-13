@@ -1,0 +1,1259 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>手寫小筆記</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="手寫小筆記">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="theme-color" content="#FFF9F0">
+<style>
+:root{
+  --paper:#FFF9F0;
+  --ink:#4A4458;
+  --rule:#EFCAD3;
+  --accent:#E88FA5;
+  --accent-soft:#FBE4EA;
+  --mint:#7FC8AC;
+  --mint-soft:#E4F5EE;
+  --pad-bg:#FFFFFF;
+  --guide:#BFE3D4;
+  --muted:#A79FB0;
+  --btn:#F6EEE2;
+  --danger:#D97B6C;
+}
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html,body{height:100%; margin:0; overflow:hidden; overscroll-behavior:none;}
+body{
+  font-family:ui-rounded, -apple-system, "PingFang TC","Noto Sans TC", sans-serif;
+  background:var(--paper); color:var(--ink);
+  display:flex; flex-direction:column;
+  padding-top:env(safe-area-inset-top);
+  -webkit-user-select:none; user-select:none;
+  -webkit-touch-callout:none;
+  touch-action:manipulation;
+}
+
+header{
+  display:flex; align-items:center; gap:8px;
+  padding:8px 12px 6px;
+}
+header h1{font-size:14px; margin:0; font-weight:800; letter-spacing:1px;}
+header h1 .ver{color:var(--muted); font-weight:500; font-size:11px;}
+header .spacer{flex:1;}
+.pill{
+  font-size:11px; padding:6px 10px; border-radius:999px;
+  background:var(--btn); color:var(--muted); border:1.5px solid transparent;
+  user-select:none; -webkit-user-select:none; touch-action:manipulation;
+  white-space:nowrap;
+}
+.pill.on{background:var(--mint-soft); color:#3E8A6C; border-color:var(--mint); font-weight:700;}
+
+/* invisible proxy input: iOS needs a focused field for keyboard+IME,
+   but the text itself flows straight into the note */
+#typeRow{
+  position:fixed; top:0; left:0; width:2px; height:2px;
+  overflow:hidden; opacity:0;
+}
+#typeIn{
+  width:2px; height:2px; border:none; outline:none; padding:0;
+  -webkit-user-select:text; user-select:text;
+}
+
+#noteWrap{
+  flex:1; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;
+  background:var(--paper);
+  border-top:1.5px solid var(--accent-soft);
+  border-bottom:1.5px solid var(--accent-soft);
+  position:relative;
+}
+#noteCanvas{display:block; width:100%;}
+#noteHint{
+  position:absolute; top:14px; left:18px; right:18px;
+  font-size:12px; color:var(--muted); pointer-events:none; line-height:1.8;
+}
+
+#blockRow{
+  display:none; align-items:center; gap:8px;
+  padding:7px 12px; background:var(--accent-soft);
+  font-size:12px; color:var(--ink);
+}
+#blockRow.show{display:flex;}
+#blockRow input{flex:1;}
+#blockRow .btn{padding:6px 12px;}
+
+#styleRow{
+  display:none; flex-direction:column; gap:6px;
+  padding:7px 12px; background:var(--mint-soft);
+  font-size:12px; color:var(--ink);
+}
+#styleRow.show{display:flex;}
+.srLine{display:flex; align-items:center; gap:6px;}
+.srLine span{flex:0 0 58px; color:var(--muted);}
+.srLine .btn{flex:1 1 0; padding:7px 4px; background:#fff;}
+
+#toolbar{
+  display:flex; flex-direction:column; gap:6px;
+  padding:7px 10px;
+  background:var(--paper);
+}
+.tbRow{
+  display:flex; align-items:center; gap:6px;
+}
+.tbRow .btn{flex:1 1 0; padding:8px 4px; white-space:nowrap;}
+.tbRow .sizeCtl{flex:1.6 1 0;}
+.btn{
+  flex:0 0 auto;
+  font-size:12px; font-weight:700;
+  padding:8px 13px; border-radius:999px;
+  background:var(--btn); color:var(--ink);
+  border:none; touch-action:manipulation;
+  font-family:inherit;
+}
+.btn:active{filter:brightness(0.95);}
+.btn.primary{background:var(--accent); color:#fff;}
+.btn.warn{color:var(--danger);}
+.sizeCtl{
+  flex:0 0 auto; display:flex; align-items:center; gap:5px;
+  font-size:11px; color:var(--muted);
+}
+.sizeCtl input{width:70px;}
+.tbRow .sizeCtl input{width:100%; min-width:50px;}
+
+/* keyboard mode: pull toolbar rows up under the header, above the note */
+body.kb header{order:-3;}
+body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
+
+#notesView{
+  position:fixed; inset:0; z-index:50;
+  background:var(--paper);
+  display:none; flex-direction:column;
+  padding-top:env(safe-area-inset-top);
+}
+#notesView.show{display:flex;}
+.nvHead{
+  display:flex; align-items:center; gap:8px;
+  padding:12px 14px; font-size:15px;
+  border-bottom:1.5px solid var(--accent-soft);
+}
+#nvList{flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:10px 12px;}
+.nvItem{
+  display:flex; align-items:center; gap:8px;
+  background:#fff; border:1.5px solid var(--accent-soft);
+  border-radius:16px; padding:12px 14px; margin-bottom:9px;
+}
+.nvItem.cur{border-color:var(--accent);}
+.nvT{flex:1; min-width:0;}
+.nvT b{font-size:14px; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.nvT small{color:var(--muted); font-size:11px;}
+
+#padWrap{
+  flex:0 0 33vh; min-height:180px; position:relative;
+  background:var(--pad-bg);
+  border-top:2.5px solid var(--accent);
+  padding-bottom:env(safe-area-inset-bottom);
+}
+#padWrap.hidden{display:none;}
+#padCanvas{display:block; width:100%; height:100%; touch-action:none;}
+#padHint{
+  position:absolute; top:8px; left:0; right:0; text-align:center;
+  font-size:11px; color:var(--muted); pointer-events:none;
+}
+#padToast{
+  position:absolute; top:44%; left:50%; transform:translate(-50%,-50%);
+  background:rgba(74,68,88,0.88); color:#fff;
+  font-size:12px; padding:9px 16px; border-radius:999px;
+  pointer-events:none; opacity:0; transition:opacity .25s;
+  white-space:nowrap;
+}
+#padToast.show{opacity:1;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🐻 手寫小筆記 <span class="ver">v17 PWA</span></h1>
+  <div class="spacer"></div>
+  <div class="pill" id="tgNotes">📚</div>
+  <div class="pill on" id="tgAuto">自動送出</div>
+  <div class="pill" id="tgPen">僅手寫筆</div>
+  <div class="pill" id="tgKb">鍵盤</div>
+</header>
+
+<div id="notesView">
+  <div class="nvHead">
+    <b>📚 我的筆記</b>
+    <div class="spacer"></div>
+    <button class="btn primary" id="nvNew">＋ 新筆記</button>
+    <button class="btn" id="nvClose">關閉</button>
+  </div>
+  <div id="nvList"></div>
+</div>
+
+<div id="typeRow">
+  <input id="typeIn" placeholder="" autocomplete="off">
+</div>
+
+<div id="noteWrap">
+  <canvas id="noteCanvas"></canvas>
+  <div id="noteHint">手寫、打字、照片、塗鴉都會排進同一個筆記流，自動換行。<br>📷 插入照片｜🎨 切到塗鴉模式自由畫｜點一下圖塊可以調大小。</div>
+</div>
+
+<div id="blockRow">
+  <span>圖塊大小</span>
+  <input type="range" id="blockSize" min="20" max="100" value="60">
+  <button class="btn warn" id="blockDel">刪除</button>
+  <button class="btn" id="blockDone">完成</button>
+</div>
+
+<div id="styleRow">
+  <div class="srLine">
+    <span>本行樣式</span>
+    <button class="btn" data-ls="bullet">• 項目</button>
+    <button class="btn" data-ls="todo">☑︎ 待辦</button>
+    <button class="btn" data-ls="h1">大標</button>
+    <button class="btn" data-ls="">一般</button>
+  </div>
+  <div class="srLine">
+    <span>標籤貼紙</span>
+    <button class="btn" data-tag="0">🔖 重要</button>
+    <button class="btn" data-tag="1">💡 想法</button>
+    <button class="btn" data-tag="2">📌 待辦</button>
+    <button class="btn" data-tag="3">❓ 疑問</button>
+  </div>
+</div>
+
+<div id="toolbar">
+  <div class="tbRow">
+    <button class="btn primary" id="btnCommit">送出</button>
+    <button class="btn" id="btnPhoto">📷 照片</button>
+    <button class="btn" id="btnDoodle">🎨 塗鴉</button>
+    <button class="btn" id="btnSpace">空格</button>
+    <button class="btn" id="btnNl">換行</button>
+  </div>
+  <div class="tbRow">
+    <button class="btn" id="btnStyle">✨ 樣式</button>
+    <button class="btn" id="btnUndo">復原筆畫</button>
+    <button class="btn" id="btnDel">⌫ 刪除</button>
+    <div class="sizeCtl">字級<input type="range" id="sizeR" min="18" max="40" value="26"></div>
+    <button class="btn warn" id="btnClear">清空</button>
+  </div>
+</div>
+
+<div id="padWrap">
+  <canvas id="padCanvas"></canvas>
+  <div id="padHint">✍️ 在格子裡書寫</div>
+  <div id="padToast"></div>
+</div>
+
+<input type="file" id="imgIn" accept="image/*" style="display:none">
+
+<script>
+(function(){
+"use strict";
+
+/* ---------- state ---------- */
+/* items: {t:'g',s,adv} | {t:'ch',c} | {t:'sp'} | {t:'nl'}
+          | {t:'img',src,ar,dw,_img} | {t:'doodle',s,ar,dw} */
+var items = [];
+var charSize = 26;
+var autoCommit = true;
+var penOnly = false;
+var doodleMode = false;
+var selItem = null;          /* selected img/doodle block (object ref) */
+var blockRects = [];         /* hit-test rects from last note render */
+var IDLE_MS = 1300;
+var INK = '#4A4458';
+
+var pad = {
+  strokes: [], cur: null,
+  activeCell: null, bbox: null, idleTimer: null,
+  cellSize: 0, cells: 0, cellTop: 0, offX: 0,
+  w: 0, h: 0
+};
+
+var noteWrap = document.getElementById('noteWrap');
+var noteCv = document.getElementById('noteCanvas');
+var padCv  = document.getElementById('padCanvas');
+var nctx = noteCv.getContext('2d');
+var pctx = padCv.getContext('2d');
+var noteHint = document.getElementById('noteHint');
+var padHint = document.getElementById('padHint');
+var blockRow = document.getElementById('blockRow');
+var blockSize = document.getElementById('blockSize');
+var DPR = Math.max(1, window.devicePixelRatio || 1);
+
+function clamp(v,a,b){ return v<a?a:(v>b?b:v); }
+function pressureOf(e){
+  if(e.pointerType==='pen' && e.pressure>0) return e.pressure;
+  return 0.5;
+}
+
+/* ---------- stroke drawing ---------- */
+function drawStroke(ctx, pts, map, wBase){
+  if(!pts.length) return;
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.strokeStyle=INK; ctx.fillStyle=INK;
+  if(pts.length===1){
+    var q=map(pts[0]);
+    ctx.beginPath();
+    ctx.arc(q.x,q.y, Math.max(0.8,wBase*(0.7+0.6*pts[0].p)/2),0,Math.PI*2);
+    ctx.fill();
+    return;
+  }
+  var prev=map(pts[0]);
+  var prevMid=prev;
+  for(var i=1;i<pts.length;i++){
+    var p=map(pts[i]);
+    var mid={x:(prev.x+p.x)/2, y:(prev.y+p.y)/2};
+    ctx.beginPath();
+    ctx.moveTo(prevMid.x, prevMid.y);
+    ctx.quadraticCurveTo(prev.x, prev.y, mid.x, mid.y);
+    ctx.lineWidth=Math.max(0.9, wBase*(0.7+0.6*((pts[i].p+pts[i-1].p)/2)));
+    ctx.stroke();
+    prevMid=mid; prev=p;
+  }
+  ctx.beginPath();
+  ctx.moveTo(prevMid.x,prevMid.y);
+  ctx.lineTo(prev.x,prev.y);
+  ctx.lineWidth=Math.max(0.9, wBase*(0.7+0.6*pts[pts.length-1].p));
+  ctx.stroke();
+}
+
+/* ---------- note layout & render ---------- */
+function buildPreviewGlyph(){
+  if(doodleMode) return null;
+  var all = pad.strokes.slice();
+  if(pad.cur) all = all.concat([pad.cur]);
+  if(!all.length || pad.activeCell===null) return null;
+  var left = pad.offX + pad.activeCell * pad.cellSize;
+  var s = all.map(function(st){
+    return st.pts.map(function(p){
+      return {x:(p.x-left)/pad.cellSize, y:(p.y-pad.cellTop)/pad.cellSize, p:p.p};
+    });
+  });
+  return {t:'g', s:s, adv:1.0, preview:true};
+}
+
+/* ---------- line styles ---------- */
+var headStyle = {ls:null, done:false};   /* style of the very first line */
+var todoRects = [];                      /* checkbox tap targets */
+function currentStyle(){
+  for(var i=items.length-1;i>=0;i--){
+    if(items[i].t==='nl') return items[i];
+  }
+  return headStyle;
+}
+function newNl(){
+  var st=currentStyle();
+  var inherit=(st.ls==='bullet'||st.ls==='todo')? st.ls : null;  /* lists continue, headings don't */
+  return {t:'nl', ls:inherit, done:false};
+}
+function applyStyle(ls){
+  var st=currentStyle();
+  st.ls=ls; st.done=false;
+  renderNote(); scrollNoteBottom();
+}
+function roundRectPath(ctx,x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+var lastCursorY = 12;
+
+function renderNote(){
+  var list = items.slice();
+  var pg = buildPreviewGlyph();
+  if(pg) list.push(pg);
+
+  if(selItem && items.indexOf(selItem)===-1){ selItem=null; blockRow.classList.remove('show'); }
+
+  var wrapW = noteWrap.clientWidth;
+  var margin = 18;
+  var maxX = wrapW - margin;
+  var avail = wrapW - margin*2;
+
+  function csOf(st){ return st.ls==='h1' ? Math.round(charSize*1.4) : charSize; }
+  function lhOf(st){ return Math.round(csOf(st)*1.55); }
+  function indentOf(st){
+    if(st.ls==='bullet') return Math.round(charSize*0.95);
+    if(st.ls==='todo')   return Math.round(charSize*1.3);
+    return 0;
+  }
+  function setFont(cs, heavy){
+    nctx.font = (heavy?'700 ':'') + cs + 'px ui-rounded, -apple-system, "PingFang TC", sans-serif';
+  }
+  function isWordChar(c){ return /[A-Za-z0-9'\u2019._\-]/.test(c); }
+
+  var curStyle = headStyle;
+  var cs = csOf(curStyle);
+  setFont(cs, curStyle.ls==='h1');
+  function widthOf(it){
+    if(it.t==='sp') return cs*0.5;
+    if(it.t==='ch') return nctx.measureText(it.c).width + cs*0.06;
+    if(it.t==='tag'){
+      var f0=nctx.font;
+      nctx.font='700 '+Math.round(cs*0.58)+'px ui-rounded, -apple-system, sans-serif';
+      var tw0=nctx.measureText(it.label).width;
+      nctx.font=f0;
+      return tw0 + cs*0.55 + cs*0.14;
+    }
+    return cs*it.adv;
+  }
+
+  /* tokenize: latin runs become unbreakable words; blocks stand alone */
+  var toks=[], ti=0;
+  while(ti<list.length){
+    var el=list[ti];
+    if(el.t==='ch' && isWordChar(el.c)){
+      var grp=[el]; ti++;
+      while(ti<list.length && list[ti].t==='ch' && isWordChar(list[ti].c)){ grp.push(list[ti]); ti++; }
+      toks.push({t:'word', g:grp});
+    }else{ toks.push(el); ti++; }
+  }
+
+  /* layout */
+  var draw=[], textLines={}, prefixes=[];
+  var lineX = margin + indentOf(curStyle);
+  var x=lineX, y=12;
+  blockRects=[]; todoRects=[];
+  prefixes.push({st:curStyle, y:y});
+  for(var t=0;t<toks.length;t++){
+    var tk=toks[t];
+    if(tk.t==='nl'){
+      y += lhOf(curStyle);
+      curStyle = tk;
+      cs = csOf(curStyle);
+      setFont(cs, curStyle.ls==='h1');
+      lineX = margin + indentOf(curStyle);
+      x = lineX;
+      prefixes.push({st:curStyle, y:y});
+      continue;
+    }
+    if(tk.t==='img' || tk.t==='doodle'){
+      if(x>lineX){ x=lineX; y+=lhOf(curStyle); }   /* block starts on its own line */
+      var bw = avail * tk.dw;
+      var bh = bw * tk.ar;
+      draw.push({it:tk, x:lineX, y:y, w:bw, h:bh, block:true});
+      blockRects.push({it:tk, x:lineX, y:y, w:bw, h:bh});
+      y += bh + 12; x = lineX;
+      continue;
+    }
+    if(tk.t==='word'){
+      var ww=0;
+      for(var wi=0;wi<tk.g.length;wi++) ww+=widthOf(tk.g[wi]);
+      if(x+ww>maxX && x>lineX && ww<=maxX-lineX){ x=lineX; y+=lhOf(curStyle); }
+      for(var gi=0;gi<tk.g.length;gi++){
+        var w2=widthOf(tk.g[gi]);
+        if(x+w2>maxX && x>lineX){ x=lineX; y+=lhOf(curStyle); }
+        draw.push({it:tk.g[gi], x:x, y:y, cs:cs, h1:curStyle.ls==='h1'});
+        textLines[y]=Math.max(textLines[y]||0, cs);
+        x+=w2;
+      }
+      continue;
+    }
+    var w=widthOf(tk);
+    if(x+w>maxX && x>lineX){ x=lineX; y+=lhOf(curStyle); }
+    draw.push({it:tk, x:x, y:y, cs:cs, h1:curStyle.ls==='h1'});
+    textLines[y]=Math.max(textLines[y]||0, cs);
+    x+=w;
+  }
+  var cx=x, cy=y, ccs=cs;
+  textLines[cy]=Math.max(textLines[cy]||0, cs);   /* cursor line gets a rule too */
+  var contentH = y + lhOf(curStyle) + 24;
+  var needH = Math.max(noteWrap.clientHeight, contentH);
+
+  if(noteCv.width!==Math.round(wrapW*DPR) || noteCv.height!==Math.round(needH*DPR)){
+    noteCv.width=Math.round(wrapW*DPR);
+    noteCv.height=Math.round(needH*DPR);
+    noteCv.style.height=needH+'px';
+  }
+  nctx.setTransform(DPR,0,0,DPR,0,0);
+  nctx.clearRect(0,0,wrapW,needH);
+
+  /* dotted ruled lines: under each real text line, then decorative below content */
+  nctx.strokeStyle='#EFCAD3'; nctx.lineWidth=1.5; nctx.lineCap='round';
+  nctx.setLineDash([2,7]);
+  var ruled={};
+  Object.keys(textLines).forEach(function(k){
+    var ly=parseInt(k,10);
+    ruled[ly + textLines[k] + 6]=1;
+  });
+  var decoLH = Math.round(charSize*1.55);
+  for(var dy = cy + decoLH + charSize + 6; dy < needH; dy += decoLH){ ruled[dy]=1; }
+  Object.keys(ruled).forEach(function(k){
+    var ry=parseInt(k,10);
+    nctx.beginPath(); nctx.moveTo(margin-4, ry+0.5); nctx.lineTo(wrapW-margin+4, ry+0.5); nctx.stroke();
+  });
+  nctx.setLineDash([]);
+
+  /* line-style prefixes: bullet dots & todo checkboxes */
+  for(var pi=0;pi<prefixes.length;pi++){
+    var pf=prefixes[pi], pcs=csOf(pf.st);
+    if(pf.st.ls==='bullet'){
+      nctx.fillStyle='#E88FA5';
+      nctx.beginPath();
+      nctx.arc(margin + pcs*0.32, pf.y + pcs*0.58, pcs*0.13, 0, Math.PI*2);
+      nctx.fill();
+    }else if(pf.st.ls==='todo'){
+      var bs=pcs*0.78, bx0=margin, by0=pf.y+pcs*0.14;
+      nctx.save();
+      nctx.lineWidth=2; nctx.strokeStyle='#7FC8AC';
+      roundRectPath(nctx, bx0, by0, bs, bs, bs*0.25);
+      if(pf.st.done){ nctx.fillStyle='#E4F5EE'; nctx.fill(); }
+      nctx.stroke();
+      if(pf.st.done){
+        nctx.strokeStyle='#3E8A6C'; nctx.lineWidth=2.4; nctx.lineCap='round';
+        nctx.beginPath();
+        nctx.moveTo(bx0+bs*0.24, by0+bs*0.52);
+        nctx.lineTo(bx0+bs*0.44, by0+bs*0.72);
+        nctx.lineTo(bx0+bs*0.78, by0+bs*0.28);
+        nctx.stroke();
+      }
+      nctx.restore();
+      todoRects.push({st:pf.st, x:bx0-8, y:by0-8, w:bs+16, h:bs+16});
+    }
+  }
+
+  /* items */
+  nctx.textBaseline='top';
+  for(var j=0;j<draw.length;j++){
+    var q=draw[j], itm=q.it;
+    if(itm.t==='ch'){
+      nctx.globalAlpha=1; nctx.fillStyle=INK;
+      setFont(q.cs, q.h1);
+      nctx.fillText(itm.c, q.x, q.y + q.cs*0.1);
+    }else if(itm.t==='g'){
+      nctx.globalAlpha = itm.preview ? 0.45 : 1;
+      (function(ox,oy,gcs){
+        for(var k=0;k<itm.s.length;k++){
+          drawStroke(nctx, itm.s[k], function(p){
+            return {x:ox + p.x*gcs, y:oy + p.y*gcs};
+          }, gcs*0.042);
+        }
+      })(q.x, q.y, q.cs);
+      nctx.globalAlpha=1;
+    }else if(itm.t==='img'){
+      if(itm._img && itm._img.complete){
+        nctx.drawImage(itm._img, q.x, q.y, q.w, q.h);
+      }else{
+        nctx.fillStyle='#F3EDE2';
+        nctx.fillRect(q.x,q.y,q.w,q.h);
+        nctx.fillStyle=INK; nctx.font='13px ui-rounded, sans-serif';
+        nctx.fillText('照片載入中…', q.x+10, q.y+10);
+      }
+    }else if(itm.t==='tag'){
+      var ts=Math.round(q.cs*0.58);
+      nctx.font='700 '+ts+'px ui-rounded, -apple-system, sans-serif';
+      var tw=nctx.measureText(itm.label).width;
+      var ph=q.cs*0.92, pw=tw+q.cs*0.5;
+      var py=q.y+q.cs*0.09;
+      nctx.fillStyle=itm.bg;
+      nctx.strokeStyle=itm.bd; nctx.lineWidth=1.5;
+      roundRectPath(nctx, q.x+2, py, pw, ph, ph/2);
+      nctx.fill(); nctx.stroke();
+      nctx.fillStyle=itm.fg;
+      nctx.fillText(itm.label, q.x+2+q.cs*0.25, py+(ph-ts)/2);
+    }else if(itm.t==='doodle'){
+      (function(bx,by,bw,bh){
+        var wB = clamp(bw*0.011, 1, 2.6);
+        for(var k=0;k<itm.s.length;k++){
+          drawStroke(nctx, itm.s[k], function(p){
+            return {x:bx + p.x*bw, y:by + p.y*bh};
+          }, wB);
+        }
+      })(q.x, q.y, q.w, q.h);
+    }
+    if(q.block && itm===selItem){
+      nctx.save();
+      nctx.strokeStyle='#E88FA5'; nctx.lineWidth=2.5;
+      nctx.setLineDash([6,5]); nctx.lineCap='round';
+      nctx.strokeRect(q.x-5, q.y-5, q.w+10, q.h+10);
+      nctx.restore();
+    }
+  }
+
+  /* cursor */
+  lastCursorY = cy;
+  nctx.strokeStyle='#E88FA5'; nctx.lineWidth=2.5; nctx.lineCap='round';
+  nctx.beginPath();
+  nctx.moveTo(cx+2, cy+2);
+  nctx.lineTo(cx+2, cy+ccs+2);
+  nctx.stroke();
+
+  /* IME composition preview (grey marked text with dashed underline) */
+  if(compText){
+    setFont(ccs, false);
+    nctx.fillStyle='#A79FB0';
+    nctx.fillText(compText, cx+7, cy+ccs*0.1);
+    var cw=nctx.measureText(compText).width;
+    nctx.strokeStyle='#A79FB0'; nctx.lineWidth=1.5; nctx.setLineDash([3,4]);
+    nctx.beginPath();
+    nctx.moveTo(cx+7, cy+ccs+4); nctx.lineTo(cx+7+cw, cy+ccs+4);
+    nctx.stroke();
+    nctx.setLineDash([]);
+  }
+
+  noteHint.style.display = items.length ? 'none':'block';
+  if(!loading) saveSoon();   /* autosave: any rendered change persists ~1s later */
+}
+
+function scrollNoteBottom(){
+  if(document.body.classList.contains('kb')){
+    noteWrap.scrollTop = Math.max(0, lastCursorY - charSize*0.5);
+    return;
+  }
+  var vh = noteWrap.clientHeight;
+  var below = lastCursorY + charSize + 24 - vh;
+  if(noteWrap.scrollTop < below) noteWrap.scrollTop = below;
+  if(lastCursorY - 12 < noteWrap.scrollTop) noteWrap.scrollTop = Math.max(0, lastCursorY - 12);
+}
+
+/* ---------- block selection (tap on note) ---------- */
+noteCv.addEventListener('click', function(e){
+  var r=noteCv.getBoundingClientRect();
+  var x=e.clientX-r.left, y=e.clientY-r.top;
+  /* todo checkboxes first */
+  for(var k=0;k<todoRects.length;k++){
+    var tr=todoRects[k];
+    if(x>=tr.x && x<=tr.x+tr.w && y>=tr.y && y<=tr.y+tr.h){
+      tr.st.done = !tr.st.done;
+      renderNote();
+      return;
+    }
+  }
+  var hit=null;
+  for(var i=blockRects.length-1;i>=0;i--){
+    var b=blockRects[i];
+    if(x>=b.x-5 && x<=b.x+b.w+5 && y>=b.y-5 && y<=b.y+b.h+5){ hit=b.it; break; }
+  }
+  selItem = hit;
+  if(selItem){
+    blockSize.value = Math.round(selItem.dw*100);
+    blockRow.classList.add('show');
+  }else{
+    blockRow.classList.remove('show');
+  }
+  renderNote();
+});
+blockSize.addEventListener('input', function(){
+  if(!selItem) return;
+  selItem.dw = parseInt(blockSize.value,10)/100;
+  renderNote();
+});
+document.getElementById('blockDel').addEventListener('click', function(){
+  if(!selItem) return;
+  var i=items.indexOf(selItem);
+  if(i>-1) items.splice(i,1);
+  selItem=null; blockRow.classList.remove('show');
+  renderNote();
+});
+document.getElementById('blockDone').addEventListener('click', function(){
+  selItem=null; blockRow.classList.remove('show'); renderNote();
+});
+
+/* ---------- photo insertion ---------- */
+var imgIn = document.getElementById('imgIn');
+document.getElementById('btnPhoto').addEventListener('click', function(){
+  imgIn.click();
+});
+imgIn.addEventListener('change', function(){
+  var f=imgIn.files && imgIn.files[0];
+  imgIn.value='';
+  if(!f) return;
+  var rd=new FileReader();
+  rd.onload=function(){
+    var raw=new Image();
+    raw.onload=function(){
+      /* downscale big photos so the note stays light */
+      var MAX=1280;
+      var sc=Math.min(1, MAX/Math.max(raw.width, raw.height));
+      var cw=Math.round(raw.width*sc), chh=Math.round(raw.height*sc);
+      var oc=document.createElement('canvas');
+      oc.width=cw; oc.height=chh;
+      oc.getContext('2d').drawImage(raw,0,0,cw,chh);
+      var src=oc.toDataURL('image/jpeg',0.82);
+      var img=new Image();
+      var item={t:'img', src:src, ar:chh/cw, dw:0.6, _img:img};
+      img.onload=function(){ renderNote(); };
+      img.src=src;
+      commitGlyph();
+      items.push(item);
+      renderNote(); scrollNoteBottom();
+    };
+    raw.src=rd.result;
+  };
+  rd.readAsDataURL(f);
+});
+
+/* ---------- pad render ---------- */
+function sizePad(){
+  var w=padCv.clientWidth, h=padCv.clientHeight;
+  if(!w || !h) return;
+  pad.w=w; pad.h=h;
+  var target = clamp(h*0.9, 130, 250);
+  pad.cells = Math.max(2, Math.floor(w/target));
+  pad.cellSize = Math.min(w/pad.cells, h-8);
+  pad.offX = (w - pad.cells*pad.cellSize)/2;
+  pad.cellTop = (h - pad.cellSize)/2;
+  padCv.width=Math.round(w*DPR); padCv.height=Math.round(h*DPR);
+}
+
+function renderPad(){
+  pctx.setTransform(DPR,0,0,DPR,0,0);
+  pctx.clearRect(0,0,pad.w,pad.h);
+
+  if(!doodleMode){
+    for(var c=0;c<pad.cells;c++){
+      var x0=pad.offX + c*pad.cellSize, y0=pad.cellTop, s=pad.cellSize;
+      pctx.strokeStyle = (c===pad.activeCell) ? '#7FC8AC' : '#D9EFE5';
+      pctx.lineWidth = (c===pad.activeCell) ? 1.8 : 1.2;
+      pctx.strokeRect(x0+3, y0+3, s-6, s-6);
+      pctx.save();
+      pctx.strokeStyle='#EAF6F0'; pctx.lineWidth=1;
+      pctx.setLineDash([4,5]);
+      pctx.beginPath();
+      pctx.moveTo(x0+s/2, y0+6); pctx.lineTo(x0+s/2, y0+s-6);
+      pctx.moveTo(x0+6, y0+s/2); pctx.lineTo(x0+s-6, y0+s/2);
+      pctx.stroke();
+      pctx.restore();
+    }
+  }else{
+    pctx.save();
+    pctx.strokeStyle='#F3D8DE'; pctx.lineWidth=1.5;
+    pctx.setLineDash([6,6]);
+    pctx.strokeRect(8,8,pad.w-16,pad.h-16);
+    pctx.restore();
+  }
+
+  var wBase = doodleMode ? 2 : clamp(pad.cellSize*0.009, 1.6, 2.4);
+  var all = pad.strokes.slice();
+  if(pad.cur) all.push(pad.cur);
+  for(var i=0;i<all.length;i++){
+    drawStroke(pctx, all[i].pts, function(p){ return {x:p.x,y:p.y}; }, wBase);
+  }
+  padHint.style.display = all.length ? 'none':'block';
+}
+
+/* ---------- commits ---------- */
+function commitGlyph(){
+  if(doodleMode) return;    /* doodle strokes are inserted via commitDoodle only */
+  clearTimeout(pad.idleTimer);
+  if(!pad.strokes.length){ pad.activeCell=null; renderPad(); return; }
+  var minX=Infinity, maxX=-Infinity;
+  pad.strokes.forEach(function(st){
+    st.pts.forEach(function(p){
+      if(p.x<minX)minX=p.x; if(p.x>maxX)maxX=p.x;
+    });
+  });
+  var s = pad.strokes.map(function(st){
+    return st.pts.map(function(p){
+      return {
+        x:(p.x-minX)/pad.cellSize + 0.05,
+        y:(p.y-pad.cellTop)/pad.cellSize,
+        p:p.p
+      };
+    });
+  });
+  var adv = clamp((maxX-minX)/pad.cellSize + 0.16, 0.42, 1.12);
+  items.push({t:'g', s:s, adv:adv});
+  pad.strokes=[]; pad.cur=null; pad.bbox=null; pad.activeCell=null;
+  renderPad(); renderNote(); scrollNoteBottom();
+}
+
+function commitDoodle(){
+  if(!pad.strokes.length) return;
+  var minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+  pad.strokes.forEach(function(st){
+    st.pts.forEach(function(p){
+      if(p.x<minX)minX=p.x; if(p.x>maxX)maxX=p.x;
+      if(p.y<minY)minY=p.y; if(p.y>maxY)maxY=p.y;
+    });
+  });
+  var bw=Math.max(1,maxX-minX), bh=Math.max(1,maxY-minY);
+  var s = pad.strokes.map(function(st){
+    return st.pts.map(function(p){
+      return {x:(p.x-minX)/bw, y:(p.y-minY)/bh, p:p.p};
+    });
+  });
+  items.push({
+    t:'doodle', s:s, ar:bh/bw,
+    dw:clamp(bw/pad.w, 0.3, 0.85)
+  });
+  pad.strokes=[]; pad.cur=null; pad.bbox=null;
+  renderPad(); renderNote(); scrollNoteBottom();
+}
+
+/* ---------- pad pointer ---------- */
+var raf=0;
+function scheduleRender(){
+  if(raf) return;
+  raf=requestAnimationFrame(function(){
+    raf=0; renderPad(); renderNote();
+  });
+}
+function padPos(e){
+  var r=padCv.getBoundingClientRect();
+  return {x:e.clientX-r.left, y:e.clientY-r.top};
+}
+
+var padToast=document.getElementById('padToast');
+var toastTimer=null;
+function showPadToast(msg){
+  padToast.textContent=msg;
+  padToast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer=setTimeout(function(){ padToast.classList.remove('show'); }, 1600);
+}
+
+padCv.addEventListener('pointerdown', function(e){
+  if(penOnly && e.pointerType!=='pen'){
+    showPadToast('🔒 僅手寫筆模式：手指輸入已停用');
+    return;
+  }
+  e.preventDefault();
+  clearTimeout(pad.idleTimer);
+  var q=padPos(e);
+  if(!doodleMode){
+    var cell=clamp(Math.floor((q.x-pad.offX)/pad.cellSize),0,pad.cells-1);
+    if(pad.activeCell===null){
+      pad.activeCell=cell;
+    }else if(pad.strokes.length && pad.bbox &&
+             q.x > pad.bbox.maxX + pad.cellSize*0.28 &&
+             cell !== pad.activeCell){
+      commitGlyph();
+      pad.activeCell=cell;
+    }
+  }
+  pad.cur={pts:[{x:q.x,y:q.y,p:pressureOf(e)}]};
+  try{ padCv.setPointerCapture(e.pointerId); }catch(err){}
+  scheduleRender();
+});
+padCv.addEventListener('pointermove', function(e){
+  if(!pad.cur) return;
+  e.preventDefault();
+  var evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  for(var i=0;i<evs.length;i++){
+    var q=padPos(evs[i]);
+    pad.cur.pts.push({x:q.x,y:q.y,p:pressureOf(evs[i])});
+  }
+  scheduleRender();
+});
+function endStroke(){
+  if(!pad.cur) return;
+  if(pad.cur.pts.length){
+    pad.strokes.push(pad.cur);
+    var b=pad.bbox||{minX:Infinity,maxX:-Infinity};
+    pad.cur.pts.forEach(function(p){
+      if(p.x<b.minX)b.minX=p.x; if(p.x>b.maxX)b.maxX=p.x;
+    });
+    pad.bbox=b;
+  }
+  pad.cur=null;
+  if(autoCommit && !doodleMode){
+    clearTimeout(pad.idleTimer);
+    pad.idleTimer=setTimeout(commitGlyph, IDLE_MS);
+  }
+  scheduleRender();
+}
+padCv.addEventListener('pointerup', function(e){ e.preventDefault(); endStroke(); });
+padCv.addEventListener('pointercancel', function(){ pad.cur=null; scheduleRender(); });
+['touchstart','touchmove','touchend'].forEach(function(ev){
+  padCv.addEventListener(ev, function(e){ e.preventDefault(); }, {passive:false});
+});
+document.addEventListener('gesturestart', function(e){ e.preventDefault(); });
+
+/* ---------- toolbar ---------- */
+var btnCommit=document.getElementById('btnCommit');
+btnCommit.addEventListener('click', function(){
+  if(doodleMode) commitDoodle();
+  else commitGlyph();
+});
+var btnDoodle=document.getElementById('btnDoodle');
+btnDoodle.addEventListener('click', function(){
+  if(!doodleMode){
+    commitGlyph();               /* flush pending glyph before switching */
+    doodleMode=true;
+    btnDoodle.textContent='✍️ 寫字';
+    btnCommit.textContent='插入塗鴉';
+    padHint.textContent='🎨 自由塗鴉，畫完按「插入塗鴉」';
+  }else{
+    pad.strokes=[]; pad.cur=null; pad.bbox=null;   /* discard unfinished doodle */
+    doodleMode=false;
+    btnDoodle.textContent='🎨 塗鴉';
+    btnCommit.textContent='送出';
+    padHint.textContent='✍️ 在格子裡書寫';
+  }
+  clearTimeout(pad.idleTimer);
+  pad.activeCell=null;
+  scheduleRender();
+});
+var TAGS=[
+  {label:'🔖 重要', bg:'#FBE4EA', fg:'#C4527A', bd:'#F3B8CB'},
+  {label:'💡 想法', bg:'#FFF3D6', fg:'#B07D2B', bd:'#F2DCA0'},
+  {label:'📌 待辦', bg:'#E4F5EE', fg:'#3E8A6C', bd:'#BFE3D4'},
+  {label:'❓ 疑問', bg:'#EBE7F7', fg:'#6C5CB0', bd:'#CFC5EC'}
+];
+function insertTag(tg){
+  items.push({t:'tag', label:tg.label, bg:tg.bg, fg:tg.fg, bd:tg.bd});
+  renderNote(); scrollNoteBottom();
+}
+var styleRow=document.getElementById('styleRow');
+document.getElementById('btnStyle').addEventListener('click', function(){
+  styleRow.classList.toggle('show');
+});
+styleRow.addEventListener('click', function(e){
+  var b=e.target.closest('button'); if(!b) return;
+  commitGlyph();
+  if(b.hasAttribute('data-tag')){
+    insertTag(TAGS[parseInt(b.getAttribute('data-tag'),10)]);
+  }else{
+    applyStyle(b.getAttribute('data-ls')||null);
+  }
+  styleRow.classList.remove('show');
+});
+document.getElementById('btnSpace').addEventListener('click', function(){
+  commitGlyph(); items.push({t:'sp'}); renderNote(); scrollNoteBottom();
+});
+document.getElementById('btnNl').addEventListener('click', function(){
+  commitGlyph(); items.push(newNl()); renderNote(); scrollNoteBottom();
+});
+document.getElementById('btnUndo').addEventListener('click', function(){
+  clearTimeout(pad.idleTimer);
+  if(pad.cur){ pad.cur=null; }
+  else if(pad.strokes.length){
+    pad.strokes.pop();
+    if(!pad.strokes.length){ pad.bbox=null; pad.activeCell=null; }
+  }
+  if(pad.strokes.length && autoCommit && !doodleMode){
+    pad.idleTimer=setTimeout(commitGlyph, IDLE_MS);
+  }
+  scheduleRender();
+});
+document.getElementById('btnDel').addEventListener('click', function(){
+  if(pad.strokes.length || pad.cur){
+    pad.strokes=[]; pad.cur=null; pad.bbox=null; pad.activeCell=null;
+    clearTimeout(pad.idleTimer);
+  }else{
+    items.pop();
+  }
+  scheduleRender(); scrollNoteBottom();
+});
+var clearArmed=false, clearBtn=document.getElementById('btnClear');
+clearBtn.addEventListener('click', function(){
+  if(!clearArmed){
+    clearArmed=true; clearBtn.textContent='再按一次清空';
+    setTimeout(function(){ clearArmed=false; clearBtn.textContent='清空'; }, 2000);
+    return;
+  }
+  items=[]; pad.strokes=[]; pad.cur=null; pad.bbox=null; pad.activeCell=null;
+  headStyle.ls=null; headStyle.done=false;
+  selItem=null; blockRow.classList.remove('show');
+  clearArmed=false; clearBtn.textContent='清空';
+  scheduleRender();
+});
+document.getElementById('sizeR').addEventListener('input', function(e){
+  charSize=parseInt(e.target.value,10); renderNote();
+});
+
+/* toggles */
+function bindToggle(id, get, set){
+  var el=document.getElementById(id);
+  el.addEventListener('click', function(){
+    set(!get());
+    el.classList.toggle('on', get());
+  });
+}
+bindToggle('tgAuto', function(){return autoCommit;}, function(v){
+  autoCommit=v;
+  if(!v) clearTimeout(pad.idleTimer);
+  else if(pad.strokes.length && !doodleMode) pad.idleTimer=setTimeout(commitGlyph, IDLE_MS);
+});
+bindToggle('tgPen', function(){return penOnly;}, function(v){penOnly=v;});
+
+/* keyboard typing — direct-to-note via invisible proxy input */
+var typeRow=document.getElementById('typeRow');
+var typeIn=document.getElementById('typeIn');
+var padWrap=document.getElementById('padWrap');
+var tgKbEl=document.getElementById('tgKb');
+var compText='';   /* IME marked text, previewed at the note cursor */
+
+function kbOn(){ return document.body.classList.contains('kb'); }
+function setKb(v){
+  if(v===kbOn()) return;
+  if(v) commitGlyph();
+  document.body.classList.toggle('kb', v);
+  padWrap.classList.toggle('hidden', v);
+  tgKbEl.classList.toggle('on', v);
+  if(v){ armSentinel(); typeIn.focus(); }
+  else{ compText=''; typeIn.value=''; typeIn.blur(); }
+  setTimeout(function(){ layoutAll(); scrollNoteBottom(); }, 60);
+}
+tgKbEl.addEventListener('click', function(){ setKb(!kbOn()); });
+
+/* tapping the note (non-focusable) blurs the input → exit keyboard mode */
+typeIn.addEventListener('blur', function(){
+  setTimeout(function(){
+    if(kbOn() && document.activeElement!==typeIn) setKb(false);
+  }, 60);
+});
+
+/* toolbar taps must NOT steal focus while typing (keep keyboard up).
+   NOTE: must be mousedown, not pointerdown — canceling pointerdown on iOS
+   also suppresses the click, so buttons would go dead. */
+['toolbar','styleRow','blockRow','tgAuto','tgPen'].forEach(function(id){
+  document.getElementById(id).addEventListener('mousedown', function(e){
+    if(kbOn() && e.target.tagName!=='INPUT') e.preventDefault();
+  });
+});
+tgKbEl.addEventListener('mousedown', function(e){ e.preventDefault(); });
+
+var composing=false;
+var SENTINEL='\u200B';
+function armSentinel(){ typeIn.value=SENTINEL; }
+function deleteLastItem(){
+  items.pop(); renderNote(); scrollNoteBottom();
+}
+function flushType(){
+  var v=typeIn.value.split(SENTINEL).join('');
+  if(!v){ return; }
+  commitGlyph();
+  var chars=Array.from(v);
+  for(var i=0;i<chars.length;i++){
+    var ch=chars[i];
+    if(ch==='\n') items.push(newNl());
+    else if(ch===' ') items.push({t:'sp'});
+    else items.push({t:'ch', c:ch});
+  }
+  armSentinel();
+  renderNote(); scrollNoteBottom();
+}
+typeIn.addEventListener('compositionstart', function(){composing=true; compText='';});
+typeIn.addEventListener('compositionupdate', function(e){
+  compText=e.data||''; renderNote();
+});
+typeIn.addEventListener('compositionend', function(){
+  composing=false; compText=''; flushType();
+});
+typeIn.addEventListener('input', function(){
+  if(composing) return;
+  if(typeIn.value.indexOf(SENTINEL)===-1){
+    deleteLastItem(); armSentinel(); return;
+  }
+  flushType();
+});
+typeIn.addEventListener('keydown', function(e){
+  if(e.key==='Enter' && !composing){
+    e.preventDefault();
+    items.push(newNl()); renderNote(); scrollNoteBottom();
+  }
+  if(e.key==='Backspace' && !composing &&
+     (typeIn.value==='' || typeIn.value===SENTINEL)){
+    e.preventDefault();
+    deleteLastItem(); armSentinel();
+  }
+});
+
+/* ---------- persistence (IndexedDB) & multiple notes ---------- */
+var db=null, curNoteId=null, saveTimer=null, loading=false;
+function idbOpen(){
+  return new Promise(function(res,rej){
+    var rq=indexedDB.open('hwNotes',1);
+    rq.onupgradeneeded=function(){
+      var d=rq.result;
+      if(!d.objectStoreNames.contains('notes')) d.createObjectStore('notes',{keyPath:'id'});
+      if(!d.objectStoreNames.contains('meta'))  d.createObjectStore('meta',{keyPath:'k'});
+    };
+    rq.onsuccess=function(){res(rq.result);};
+    rq.onerror=function(){rej(rq.error);};
+  });
+}
+function idbPut(st,val){return new Promise(function(res,rej){var tx=db.transaction(st,'readwrite');tx.objectStore(st).put(val);tx.oncomplete=res;tx.onerror=function(){rej(tx.error);};});}
+function idbGet(st,key){return new Promise(function(res,rej){var rq=db.transaction(st).objectStore(st).get(key);rq.onsuccess=function(){res(rq.result);};rq.onerror=function(){rej(rq.error);};});}
+function idbAll(st){return new Promise(function(res,rej){var rq=db.transaction(st).objectStore(st).getAll();rq.onsuccess=function(){res(rq.result||[]);};rq.onerror=function(){rej(rq.error);};});}
+function idbDel(st,key){return new Promise(function(res,rej){var tx=db.transaction(st,'readwrite');tx.objectStore(st).delete(key);tx.oncomplete=res;tx.onerror=function(){rej(tx.error);};});}
+
+function serializeItems(){
+  return items.map(function(it){
+    if(it.t==='img') return {t:'img', src:it.src, ar:it.ar, dw:it.dw};
+    return it;
+  });
+}
+function noteTitle(){
+  var s='';
+  for(var i=0;i<items.length && s.length<14;i++){
+    if(items[i].t==='ch') s+=items[i].c;
+    else if(items[i].t==='sp' && s) s+=' ';
+    else if(items[i].t==='nl' && s.trim()) break;
+  }
+  if(s.trim()) return s.trim();
+  for(var j=0;j<items.length;j++){
+    if(items[j].t==='g') return '（手寫筆記）';
+    if(items[j].t==='img') return '（照片筆記）';
+    if(items[j].t==='doodle') return '（塗鴉筆記）';
+  }
+  return '（空白筆記）';
+}
+function saveNow(){
+  if(!db || !curNoteId || loading) return;
+  idbPut('notes',{
+    id:curNoteId, items:serializeItems(),
+    head:{ls:headStyle.ls, done:headStyle.done},
+    charSize:charSize, title:noteTitle(), updated:Date.now()
+  }).catch(function(){});
+  idbPut('meta',{k:'lastId', v:curNoteId}).catch(function(){});
+}
+function saveSoon(){ clearTimeout(saveTimer); saveTimer=setTimeout(saveNow, 900); }
+
+function resetEditor(){
+  pad.strokes=[]; pad.cur=null; pad.bbox=null; pad.activeCell=null;
+  clearTimeout(pad.idleTimer);
+  selItem=null; blockRow.classList.remove('show');
+  styleRow.classList.remove('show');
+}
+function loadNote(rec){
+  loading=true;
+  curNoteId=rec.id;
+  headStyle.ls=(rec.head&&rec.head.ls)||null;
+  headStyle.done=!!(rec.head&&rec.head.done);
+  charSize=rec.charSize||26;
+  document.getElementById('sizeR').value=charSize;
+  items=(rec.items||[]).map(function(it){
+    if(it.t==='img'){
+      var o={t:'img', src:it.src, ar:it.ar, dw:it.dw};
+      var im=new Image();
+      o._img=im;
+      im.onload=function(){ renderNote(); };
+      im.src=it.src;
+      return o;
+    }
+    return it;
+  });
+  resetEditor();
+  loading=false;
+  renderNote(); renderPad();
+  noteWrap.scrollTop=0;
+  if(db) idbPut('meta',{k:'lastId', v:curNoteId}).catch(function(){});
+}
+function newNote(){
+  saveNow();
+  curNoteId='n'+Date.now().toString(36);
+  headStyle.ls=null; headStyle.done=false;
+  items=[];
+  resetEditor();
+  renderNote(); renderPad();
+  noteWrap.scrollTop=0;
+  saveNow();
+}
+
+/* notes list view */
+var notesView=document.getElementById('notesView');
+function fmtDate(ts){
+  var d=new Date(ts);
+  return (d.getMonth()+1)+'/'+d.getDate()+' '+('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2);
+}
+function refreshNotesList(){
+  if(!db){ document.getElementById('nvList').innerHTML='<div style="color:var(--muted);padding:20px;text-align:center;">此環境無法使用儲存空間，筆記僅保留在記憶體中</div>'; return; }
+  idbAll('notes').then(function(list){
+    list.sort(function(a,b){ return b.updated-a.updated; });
+    var nv=document.getElementById('nvList');
+    nv.innerHTML='';
+    list.forEach(function(rec){
+      var row=document.createElement('div');
+      row.className='nvItem'+(rec.id===curNoteId?' cur':'');
+      var tx=document.createElement('div'); tx.className='nvT';
+      var b=document.createElement('b'); b.textContent=rec.title||'（未命名）';
+      var sm=document.createElement('small'); sm.textContent=fmtDate(rec.updated);
+      tx.appendChild(b); tx.appendChild(sm);
+      row.appendChild(tx);
+      var del=document.createElement('button');
+      del.className='btn warn'; del.textContent='刪除';
+      del.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        if(del.textContent==='刪除'){
+          del.textContent='確定刪除?';
+          setTimeout(function(){ del.textContent='刪除'; }, 2000);
+          return;
+        }
+        idbDel('notes', rec.id).then(function(){
+          if(rec.id===curNoteId){
+            return idbAll('notes').then(function(rest){
+              rest.sort(function(a,b){ return b.updated-a.updated; });
+              if(rest.length) loadNote(rest[0]);
+              else newNote();
+            });
+          }
+        }).then(refreshNotesList);
+      });
+      row.appendChild(del);
+      row.addEventListener('click', function(){
+        loadNote(rec);
+        notesView.classList.remove('show');
+      });
+      nv.appendChild(row);
+    });
+  });
+}
+document.getElementById('tgNotes').addEventListener('click', function(){
+  setKb(false);
+  saveNow();
+  refreshNotesList();
+  notesView.classList.add('show');
+});
+document.getElementById('nvClose').addEventListener('click', function(){
+  notesView.classList.remove('show');
+});
+document.getElementById('nvNew').addEventListener('click', function(){
+  newNote();
+  notesView.classList.remove('show');
+});
+
+/* startup: open DB, restore last note */
+idbOpen().then(function(d){
+  db=d;
+  return idbGet('meta','lastId');
+}).then(function(m){
+  if(m && m.v) return idbGet('notes', m.v);
+  return null;
+}).then(function(rec){
+  if(rec) loadNote(rec);
+  else newNote();
+}).catch(function(){
+  /* storage unavailable (e.g. restricted webview) — run in-memory */
+  db=null;
+  curNoteId='n'+Date.now().toString(36);
+});
+
+/* ---------- resize / viewport ---------- */
+function layoutAll(){
+  DPR=Math.max(1, window.devicePixelRatio||1);
+  sizePad(); renderPad(); renderNote();
+}
+window.addEventListener('resize', layoutAll);
+window.addEventListener('orientationchange', function(){ setTimeout(layoutAll,150); });
+if(window.visualViewport){
+  var vvFix=function(){
+    document.body.style.height = window.visualViewport.height + 'px';
+    window.scrollTo(0,0);
+    layoutAll();
+    scrollNoteBottom();
+  };
+  window.visualViewport.addEventListener('resize', vvFix);
+  window.visualViewport.addEventListener('scroll', function(){ window.scrollTo(0,0); });
+}
+layoutAll();
+
+})();
+</script>
+</body>
+</html>
