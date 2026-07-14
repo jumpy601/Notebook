@@ -156,6 +156,12 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
 .nvT{flex:1; min-width:0;}
 .nvT b{font-size:14px; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .nvT small{color:var(--muted); font-size:11px;}
+.nvRename{
+  width:100%; font-family:inherit; font-size:14px;
+  border:1.5px solid var(--accent); border-radius:8px;
+  padding:4px 8px; outline:none; color:var(--ink); background:#fff;
+  -webkit-user-select:text; user-select:text;
+}
 
 #padWrap{
   flex:0 0 33vh; min-height:180px; position:relative;
@@ -182,7 +188,7 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v20 備份</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v21 離線與命名</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgNotes">📚</div>
   <div class="pill on" id="tgAuto">自動送出</div>
@@ -1122,7 +1128,7 @@ typeIn.addEventListener('keydown', function(e){
 });
 
 /* ---------- persistence (IndexedDB) & multiple notes ---------- */
-var db=null, curNoteId=null, saveTimer=null, loading=false;
+var db=null, curNoteId=null, curNoteName=null, saveTimer=null, loading=false;
 function idbOpen(){
   return new Promise(function(res,rej){
     var rq=indexedDB.open('hwNotes',1);
@@ -1166,7 +1172,7 @@ function saveNow(){
   idbPut('notes',{
     id:curNoteId, items:serializeItems(),
     head:{ls:headStyle.ls, done:headStyle.done},
-    charSize:charSize, title:noteTitle(), updated:Date.now()
+    charSize:charSize, title:noteTitle(), name:curNoteName||null, updated:Date.now()
   }).catch(function(){});
   idbPut('meta',{k:'lastId', v:curNoteId}).catch(function(){});
 }
@@ -1181,6 +1187,7 @@ function resetEditor(){
 function loadNote(rec){
   loading=true;
   curNoteId=rec.id;
+  curNoteName=rec.name||null;
   headStyle.ls=(rec.head&&rec.head.ls)||null;
   headStyle.done=!!(rec.head&&rec.head.done);
   charSize=rec.charSize||26;
@@ -1206,6 +1213,7 @@ function loadNote(rec){
 function newNote(){
   saveNow();
   curNoteId='n'+Date.now().toString(36);
+  curNoteName=null;
   headStyle.ls=null; headStyle.done=false;
   items=[]; cursor=0;
   resetEditor();
@@ -1230,10 +1238,39 @@ function refreshNotesList(){
       var row=document.createElement('div');
       row.className='nvItem'+(rec.id===curNoteId?' cur':'');
       var tx=document.createElement('div'); tx.className='nvT';
-      var b=document.createElement('b'); b.textContent=rec.title||'（未命名）';
+      var b=document.createElement('b'); b.textContent=rec.name||rec.title||'（未命名）';
       var sm=document.createElement('small'); sm.textContent=fmtDate(rec.updated);
       tx.appendChild(b); tx.appendChild(sm);
       row.appendChild(tx);
+      var ren=document.createElement('button');
+      ren.className='btn'; ren.textContent='✏️';
+      ren.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        if(tx.querySelector('input')) return;   /* already editing */
+        var inp=document.createElement('input');
+        inp.type='text'; inp.className='nvRename';
+        inp.value=rec.name||'';
+        inp.placeholder=rec.title||'輸入名稱';
+        tx.replaceChild(inp, b);
+        inp.focus();
+        inp.addEventListener('click', function(e2){ e2.stopPropagation(); });
+        var done=false;
+        function commit(){
+          if(done) return; done=true;
+          var nm=inp.value.trim();
+          rec.name=nm||null;
+          idbPut('notes', rec).then(function(){
+            if(rec.id===curNoteId) curNoteName=rec.name;
+            refreshNotesList();
+          }).catch(function(){ refreshNotesList(); });
+        }
+        inp.addEventListener('blur', commit);
+        inp.addEventListener('keydown', function(e2){
+          if(e2.key==='Enter'){ e2.preventDefault(); inp.blur(); }
+          if(e2.key==='Escape'){ done=true; refreshNotesList(); }
+        });
+      });
+      row.appendChild(ren);
       var del=document.createElement('button');
       del.className='btn warn'; del.textContent='刪除';
       del.addEventListener('click', function(ev){
@@ -1374,6 +1411,11 @@ impIn.addEventListener('change', function(){
   impIn.value='';
   if(f) importFile(f);
 });
+
+/* ---------- offline: register service worker ---------- */
+if('serviceWorker' in navigator){
+  try{ navigator.serviceWorker.register('sw.js').catch(function(){}); }catch(e){}
+}
 
 /* ---------- custom font: jf open 粉圓 loaded as "HWNote" ---------- */
 /* FontFace API (not base64 @font-face): large embedded base64 fails silently */
