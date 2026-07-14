@@ -177,7 +177,7 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v18 粉圓字體</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v19 游標保鍵盤</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgNotes">📚</div>
   <div class="pill on" id="tgAuto">自動送出</div>
@@ -1056,6 +1056,13 @@ typeIn.addEventListener('blur', function(){
   });
 });
 tgKbEl.addEventListener('mousedown', function(e){ e.preventDefault(); });
+
+/* in keyboard mode, tapping the note moves the cursor — it must NOT blur
+   the proxy input (which would exit keyboard mode). Exit is explicit:
+   the 鍵盤 pill or the keyboard's own dismiss key. */
+noteWrap.addEventListener('mousedown', function(e){
+  if(kbOn()) e.preventDefault();
+});
 
 var composing=false;
 var SENTINEL='\u200B';
