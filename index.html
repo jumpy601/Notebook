@@ -29,7 +29,7 @@
 *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
 html,body{height:100%; margin:0; overflow:hidden; overscroll-behavior:none;}
 body{
-  font-family:ui-rounded, -apple-system, "PingFang TC","Noto Sans TC", sans-serif;
+  font-family:"HWNote", ui-rounded, -apple-system, "PingFang TC","Noto Sans TC", sans-serif;
   background:var(--paper); color:var(--ink);
   display:flex; flex-direction:column;
   padding-top:env(safe-area-inset-top);
@@ -177,7 +177,7 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v17 PWA</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v18 粉圓字體</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgNotes">📚</div>
   <div class="pill on" id="tgAuto">自動送出</div>
@@ -340,11 +340,25 @@ function buildPreviewGlyph(){
   return {t:'g', s:s, adv:1.0, preview:true};
 }
 
+/* ---------- cursor (insertion point) ---------- */
+var cursor = 0;               /* index into items: insert happens here */
+var cursorMap = [];           /* posAt[i] from last layout, for tap-to-place */
+function insertItem(it){
+  items.splice(cursor, 0, it);
+  cursor++;
+}
+function deleteBeforeCursor(){
+  if(cursor>0){
+    items.splice(cursor-1, 1);
+    cursor--;
+  }
+}
+
 /* ---------- line styles ---------- */
 var headStyle = {ls:null, done:false};   /* style of the very first line */
 var todoRects = [];                      /* checkbox tap targets */
 function currentStyle(){
-  for(var i=items.length-1;i>=0;i--){
+  for(var i=cursor-1;i>=0;i--){
     if(items[i].t==='nl') return items[i];
   }
   return headStyle;
@@ -372,9 +386,10 @@ function roundRectPath(ctx,x,y,w,h,r){
 var lastCursorY = 12;
 
 function renderNote(){
-  var list = items.slice();
   var pg = buildPreviewGlyph();
-  if(pg) list.push(pg);
+  var list = items.slice();
+  if(pg) list.splice(cursor, 0, pg);
+  var cursorListIdx = cursor + (pg ? 1 : 0);
 
   if(selItem && items.indexOf(selItem)===-1){ selItem=null; blockRow.classList.remove('show'); }
 
@@ -391,7 +406,7 @@ function renderNote(){
     return 0;
   }
   function setFont(cs, heavy){
-    nctx.font = (heavy?'700 ':'') + cs + 'px ui-rounded, -apple-system, "PingFang TC", sans-serif';
+    nctx.font = (heavy?'700 ':'') + cs + 'px "HWNote", ui-rounded, -apple-system, "PingFang TC", sans-serif';
   }
   function isWordChar(c){ return /[A-Za-z0-9'\u2019._\-]/.test(c); }
 
@@ -403,7 +418,7 @@ function renderNote(){
     if(it.t==='ch') return nctx.measureText(it.c).width + cs*0.06;
     if(it.t==='tag'){
       var f0=nctx.font;
-      nctx.font='700 '+Math.round(cs*0.58)+'px ui-rounded, -apple-system, sans-serif';
+      nctx.font='700 '+Math.round(cs*0.58)+'px "HWNote", ui-rounded, -apple-system, sans-serif';
       var tw0=nctx.measureText(it.label).width;
       nctx.font=f0;
       return tw0 + cs*0.55 + cs*0.14;
@@ -411,26 +426,44 @@ function renderNote(){
     return cs*it.adv;
   }
 
-  /* tokenize: latin runs become unbreakable words; blocks stand alone */
+  /* tokenize: latin runs become unbreakable words; blocks stand alone.
+     每個 token 都帶原始 list index，供位置地圖使用 */
   var toks=[], ti=0;
   while(ti<list.length){
     var el=list[ti];
     if(el.t==='ch' && isWordChar(el.c)){
-      var grp=[el]; ti++;
+      var grp=[el], gIdx=ti; ti++;
       while(ti<list.length && list[ti].t==='ch' && isWordChar(list[ti].c)){ grp.push(list[ti]); ti++; }
-      toks.push({t:'word', g:grp});
-    }else{ toks.push(el); ti++; }
+      toks.push({t:'word', g:grp, idx:gIdx});
+    }else{ toks.push({t:'one', it:el, idx:ti}); ti++; }
   }
 
-  /* layout */
+  /* layout — posAt[i] = 第 i 個項目起點（游標可停的位置）*/
   var draw=[], textLines={}, prefixes=[];
+  var posAt=new Array(list.length+1);
   var lineX = margin + indentOf(curStyle);
   var x=lineX, y=12;
   blockRects=[]; todoRects=[];
   prefixes.push({st:curStyle, y:y});
   for(var t=0;t<toks.length;t++){
-    var tk=toks[t];
+    var tok=toks[t];
+    if(tok.t==='word'){
+      var ww=0;
+      for(var wi=0;wi<tok.g.length;wi++) ww+=widthOf(tok.g[wi]);
+      if(x+ww>maxX && x>lineX && ww<=maxX-lineX){ x=lineX; y+=lhOf(curStyle); }
+      for(var gi=0;gi<tok.g.length;gi++){
+        var w2=widthOf(tok.g[gi]);
+        if(x+w2>maxX && x>lineX){ x=lineX; y+=lhOf(curStyle); }
+        posAt[tok.idx+gi]={x:x, y:y, cs:cs};
+        draw.push({it:tok.g[gi], x:x, y:y, cs:cs, h1:curStyle.ls==='h1'});
+        textLines[y]=Math.max(textLines[y]||0, cs);
+        x+=w2;
+      }
+      continue;
+    }
+    var tk=tok.it;
     if(tk.t==='nl'){
+      posAt[tok.idx]={x:x, y:y, cs:cs};   /* 游標停在換行符 = 該行行尾 */
       y += lhOf(curStyle);
       curStyle = tk;
       cs = csOf(curStyle);
@@ -444,32 +477,25 @@ function renderNote(){
       if(x>lineX){ x=lineX; y+=lhOf(curStyle); }   /* block starts on its own line */
       var bw = avail * tk.dw;
       var bh = bw * tk.ar;
+      posAt[tok.idx]={x:lineX, y:y, cs:cs};
       draw.push({it:tk, x:lineX, y:y, w:bw, h:bh, block:true});
       blockRects.push({it:tk, x:lineX, y:y, w:bw, h:bh});
       y += bh + 12; x = lineX;
       continue;
     }
-    if(tk.t==='word'){
-      var ww=0;
-      for(var wi=0;wi<tk.g.length;wi++) ww+=widthOf(tk.g[wi]);
-      if(x+ww>maxX && x>lineX && ww<=maxX-lineX){ x=lineX; y+=lhOf(curStyle); }
-      for(var gi=0;gi<tk.g.length;gi++){
-        var w2=widthOf(tk.g[gi]);
-        if(x+w2>maxX && x>lineX){ x=lineX; y+=lhOf(curStyle); }
-        draw.push({it:tk.g[gi], x:x, y:y, cs:cs, h1:curStyle.ls==='h1'});
-        textLines[y]=Math.max(textLines[y]||0, cs);
-        x+=w2;
-      }
-      continue;
-    }
     var w=widthOf(tk);
     if(x+w>maxX && x>lineX){ x=lineX; y+=lhOf(curStyle); }
+    posAt[tok.idx]={x:x, y:y, cs:cs};
     draw.push({it:tk, x:x, y:y, cs:cs, h1:curStyle.ls==='h1'});
     textLines[y]=Math.max(textLines[y]||0, cs);
     x+=w;
   }
-  var cx=x, cy=y, ccs=cs;
-  textLines[cy]=Math.max(textLines[cy]||0, cs);   /* cursor line gets a rule too */
+  posAt[list.length]={x:x, y:y, cs:cs};
+  cursorMap = (pg ? [] : posAt);   /* 書寫預覽中不開放點擊定位 */
+
+  var cp = posAt[cursorListIdx] || posAt[list.length];
+  var cx=cp.x, cy=cp.y, ccs=cp.cs;
+  textLines[cy]=Math.max(textLines[cy]||0, ccs);   /* cursor line gets a rule too */
   var contentH = y + lhOf(curStyle) + 24;
   var needH = Math.max(noteWrap.clientHeight, contentH);
 
@@ -549,12 +575,12 @@ function renderNote(){
       }else{
         nctx.fillStyle='#F3EDE2';
         nctx.fillRect(q.x,q.y,q.w,q.h);
-        nctx.fillStyle=INK; nctx.font='13px ui-rounded, sans-serif';
+        nctx.fillStyle=INK; nctx.font='13px "HWNote", ui-rounded, sans-serif';
         nctx.fillText('照片載入中…', q.x+10, q.y+10);
       }
     }else if(itm.t==='tag'){
       var ts=Math.round(q.cs*0.58);
-      nctx.font='700 '+ts+'px ui-rounded, -apple-system, sans-serif';
+      nctx.font='700 '+ts+'px "HWNote", ui-rounded, -apple-system, sans-serif';
       var tw=nctx.measureText(itm.label).width;
       var ph=q.cs*0.92, pw=tw+q.cs*0.5;
       var py=q.y+q.cs*0.09;
@@ -641,10 +667,23 @@ noteCv.addEventListener('click', function(e){
   if(selItem){
     blockSize.value = Math.round(selItem.dw*100);
     blockRow.classList.add('show');
-  }else{
-    blockRow.classList.remove('show');
+    renderNote();
+    return;
   }
-  renderNote();
+  blockRow.classList.remove('show');
+
+  /* move cursor to the tapped position */
+  commitGlyph();                     /* flush pending glyph first (re-renders & refreshes cursorMap) */
+  var best=-1, bestD=Infinity;
+  for(var m=0;m<cursorMap.length;m++){
+    var p=cursorMap[m]; if(!p) continue;
+    var lh=p.cs*1.55;
+    var dy = (y<p.y) ? (p.y-y) : (y>p.y+lh ? y-(p.y+lh) : 0);
+    var d = dy*1000 + Math.abs(x-p.x);
+    if(d<bestD){ bestD=d; best=m; }
+  }
+  if(best>=0) cursor = Math.min(best, items.length);
+  renderNote(); scrollNoteBottom();
 });
 blockSize.addEventListener('input', function(){
   if(!selItem) return;
@@ -654,7 +693,7 @@ blockSize.addEventListener('input', function(){
 document.getElementById('blockDel').addEventListener('click', function(){
   if(!selItem) return;
   var i=items.indexOf(selItem);
-  if(i>-1) items.splice(i,1);
+  if(i>-1){ items.splice(i,1); if(i<cursor) cursor--; }
   selItem=null; blockRow.classList.remove('show');
   renderNote();
 });
@@ -688,7 +727,7 @@ imgIn.addEventListener('change', function(){
       img.onload=function(){ renderNote(); };
       img.src=src;
       commitGlyph();
-      items.push(item);
+      insertItem(item);
       renderNote(); scrollNoteBottom();
     };
     raw.src=rd.result;
@@ -766,7 +805,7 @@ function commitGlyph(){
     });
   });
   var adv = clamp((maxX-minX)/pad.cellSize + 0.16, 0.42, 1.12);
-  items.push({t:'g', s:s, adv:adv});
+  insertItem({t:'g', s:s, adv:adv});
   pad.strokes=[]; pad.cur=null; pad.bbox=null; pad.activeCell=null;
   renderPad(); renderNote(); scrollNoteBottom();
 }
@@ -786,7 +825,7 @@ function commitDoodle(){
       return {x:(p.x-minX)/bw, y:(p.y-minY)/bh, p:p.p};
     });
   });
-  items.push({
+  insertItem({
     t:'doodle', s:s, ar:bh/bw,
     dw:clamp(bw/pad.w, 0.3, 0.85)
   });
@@ -905,7 +944,7 @@ var TAGS=[
   {label:'❓ 疑問', bg:'#EBE7F7', fg:'#6C5CB0', bd:'#CFC5EC'}
 ];
 function insertTag(tg){
-  items.push({t:'tag', label:tg.label, bg:tg.bg, fg:tg.fg, bd:tg.bd});
+  insertItem({t:'tag', label:tg.label, bg:tg.bg, fg:tg.fg, bd:tg.bd});
   renderNote(); scrollNoteBottom();
 }
 var styleRow=document.getElementById('styleRow');
@@ -923,10 +962,10 @@ styleRow.addEventListener('click', function(e){
   styleRow.classList.remove('show');
 });
 document.getElementById('btnSpace').addEventListener('click', function(){
-  commitGlyph(); items.push({t:'sp'}); renderNote(); scrollNoteBottom();
+  commitGlyph(); insertItem({t:'sp'}); renderNote(); scrollNoteBottom();
 });
 document.getElementById('btnNl').addEventListener('click', function(){
-  commitGlyph(); items.push(newNl()); renderNote(); scrollNoteBottom();
+  commitGlyph(); insertItem(newNl()); renderNote(); scrollNoteBottom();
 });
 document.getElementById('btnUndo').addEventListener('click', function(){
   clearTimeout(pad.idleTimer);
@@ -945,7 +984,7 @@ document.getElementById('btnDel').addEventListener('click', function(){
     pad.strokes=[]; pad.cur=null; pad.bbox=null; pad.activeCell=null;
     clearTimeout(pad.idleTimer);
   }else{
-    items.pop();
+    deleteBeforeCursor();
   }
   scheduleRender(); scrollNoteBottom();
 });
@@ -956,7 +995,7 @@ clearBtn.addEventListener('click', function(){
     setTimeout(function(){ clearArmed=false; clearBtn.textContent='清空'; }, 2000);
     return;
   }
-  items=[]; pad.strokes=[]; pad.cur=null; pad.bbox=null; pad.activeCell=null;
+  items=[]; cursor=0; pad.strokes=[]; pad.cur=null; pad.bbox=null; pad.activeCell=null;
   headStyle.ls=null; headStyle.done=false;
   selItem=null; blockRow.classList.remove('show');
   clearArmed=false; clearBtn.textContent='清空';
@@ -1022,7 +1061,7 @@ var composing=false;
 var SENTINEL='\u200B';
 function armSentinel(){ typeIn.value=SENTINEL; }
 function deleteLastItem(){
-  items.pop(); renderNote(); scrollNoteBottom();
+  deleteBeforeCursor(); renderNote(); scrollNoteBottom();
 }
 function flushType(){
   var v=typeIn.value.split(SENTINEL).join('');
@@ -1031,9 +1070,9 @@ function flushType(){
   var chars=Array.from(v);
   for(var i=0;i<chars.length;i++){
     var ch=chars[i];
-    if(ch==='\n') items.push(newNl());
-    else if(ch===' ') items.push({t:'sp'});
-    else items.push({t:'ch', c:ch});
+    if(ch==='\n') insertItem(newNl());
+    else if(ch===' ') insertItem({t:'sp'});
+    else insertItem({t:'ch', c:ch});
   }
   armSentinel();
   renderNote(); scrollNoteBottom();
@@ -1055,7 +1094,7 @@ typeIn.addEventListener('input', function(){
 typeIn.addEventListener('keydown', function(e){
   if(e.key==='Enter' && !composing){
     e.preventDefault();
-    items.push(newNl()); renderNote(); scrollNoteBottom();
+    insertItem(newNl()); renderNote(); scrollNoteBottom();
   }
   if(e.key==='Backspace' && !composing &&
      (typeIn.value==='' || typeIn.value===SENTINEL)){
@@ -1139,6 +1178,7 @@ function loadNote(rec){
     }
     return it;
   });
+  cursor=items.length;
   resetEditor();
   loading=false;
   renderNote(); renderPad();
@@ -1149,7 +1189,7 @@ function newNote(){
   saveNow();
   curNoteId='n'+Date.now().toString(36);
   headStyle.ls=null; headStyle.done=false;
-  items=[];
+  items=[]; cursor=0;
   resetEditor();
   renderNote(); renderPad();
   noteWrap.scrollTop=0;
@@ -1233,6 +1273,16 @@ idbOpen().then(function(d){
   db=null;
   curNoteId='n'+Date.now().toString(36);
 });
+
+/* ---------- custom font: jf open 粉圓 loaded as "HWNote" ---------- */
+/* FontFace API (not base64 @font-face): large embedded base64 fails silently */
+try{
+  var hwFont=new FontFace('HWNote','url(huninn.woff2)');
+  hwFont.load().then(function(f){
+    document.fonts.add(f);
+    renderNote();          /* re-measure & re-render once glyphs are ready */
+  }).catch(function(){});  /* font missing → stack falls back to PingFang */
+}catch(e){}
 
 /* ---------- resize / viewport ---------- */
 function layoutAll(){
