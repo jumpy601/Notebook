@@ -210,7 +210,7 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v23 備份還原</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v24 還原防競速</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgNotes">📚</div>
   <div class="pill on" id="tgAuto">自動送出</div>
@@ -1223,6 +1223,7 @@ function resetEditor(){
   styleRow.classList.remove('show');
 }
 function loadNote(rec){
+  clearTimeout(saveTimer);   /* kill pending autosave: it holds PRE-load content */
   loading=true;
   curNoteId=rec.id;
   curNoteName=rec.name||null;
@@ -1347,6 +1348,7 @@ function refreshNotesList(){
 document.getElementById('tgNotes').addEventListener('click', function(){
   setKb(false);
   saveNow();
+  clearTimeout(saveTimer);   /* immediate save above makes any pending timer stale */
   refreshNotesList();
   notesView.classList.add('show');
 });
@@ -1498,26 +1500,41 @@ function applyImport(){
   if(!p) return;
   pendingImport=null;
   impPanel.classList.remove('show');
+  clearTimeout(saveTimer);   /* no stale autosave may land during/after the apply */
+  loading=true;              /* block new autosaves while we write */
   var restored=p.conflicts.filter(function(c){ return c.restore; });
   var kept=p.conflicts.length-restored.length;
   var chain=Promise.resolve();
   p.news.forEach(function(rec){
     chain=chain.then(function(){ return idbPut('notes', rec); });
   });
-  var reloadCur=null;
+  var restoredCur=false;
   restored.forEach(function(c){
     chain=chain.then(function(){ return idbPut('notes', c.theirs); });
-    if(c.theirs.id===curNoteId) reloadCur=c.theirs;
+    if(c.theirs.id===curNoteId) restoredCur=true;
   });
   chain.then(function(){
-    if(reloadCur) loadNote(reloadCur);   /* restored the open note → reload editor */
-    refreshNotesList();
-    var msg='匯入完成：新增 '+p.news.length+' 篇';
-    if(restored.length) msg+='、還原 '+restored.length+' 篇';
-    if(kept) msg+='、保留 '+kept+' 篇現有';
-    if(p.bad) msg+='、'+p.bad+' 篇格式錯誤';
-    nvMsg(msg);
-  }).catch(function(){ nvMsg('匯入時發生錯誤'); });
+    var finish=function(extra){
+      refreshNotesList();
+      var msg='匯入完成：新增 '+p.news.length+' 篇';
+      if(restored.length) msg+='、還原 '+restored.length+' 篇';
+      if(kept) msg+='、保留 '+kept+' 篇現有';
+      if(p.bad) msg+='、'+p.bad+' 篇格式錯誤';
+      if(extra) msg+=extra;
+      nvMsg(msg);
+    };
+    if(restoredCur){
+      /* reload the open note from DB ground truth, not the in-memory file object */
+      idbGet('notes', curNoteId).then(function(fresh){
+        loading=false;
+        if(fresh){ loadNote(fresh); finish('（已重新載入）'); }
+        else finish('（重新載入失敗）');
+      }).catch(function(){ loading=false; finish('（重新載入失敗）'); });
+    }else{
+      loading=false;
+      finish();
+    }
+  }).catch(function(){ loading=false; nvMsg('匯入時發生錯誤'); });
 }
 document.getElementById('impCancel').addEventListener('click', function(){
   pendingImport=null; impPanel.classList.remove('show'); nvMsg('已取消匯入');
