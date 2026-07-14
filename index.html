@@ -188,7 +188,7 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v21 離線與命名</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v22 修命名備份</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgNotes">📚</div>
   <div class="pill on" id="tgAuto">自動送出</div>
@@ -1168,13 +1168,14 @@ function noteTitle(){
   return '（空白筆記）';
 }
 function saveNow(){
-  if(!db || !curNoteId || loading) return;
-  idbPut('notes',{
+  if(!db || !curNoteId || loading) return Promise.resolve();
+  var p=idbPut('notes',{
     id:curNoteId, items:serializeItems(),
     head:{ls:headStyle.ls, done:headStyle.done},
     charSize:charSize, title:noteTitle(), name:curNoteName||null, updated:Date.now()
   }).catch(function(){});
   idbPut('meta',{k:'lastId', v:curNoteId}).catch(function(){});
+  return p;
 }
 function saveSoon(){ clearTimeout(saveTimer); saveTimer=setTimeout(saveNow, 900); }
 
@@ -1259,8 +1260,8 @@ function refreshNotesList(){
           if(done) return; done=true;
           var nm=inp.value.trim();
           rec.name=nm||null;
+          if(rec.id===curNoteId) curNoteName=rec.name;   /* sync BEFORE async put: autosave/export must see the new name */
           idbPut('notes', rec).then(function(){
-            if(rec.id===curNoteId) curNoteName=rec.name;
             refreshNotesList();
           }).catch(function(){ refreshNotesList(); });
         }
@@ -1339,8 +1340,7 @@ function nvMsg(t){
 }
 function exportAll(){
   if(!db){ nvMsg('此環境無儲存空間可匯出'); return; }
-  saveNow();
-  idbAll('notes').then(function(list){
+  saveNow().then(function(){ return idbAll('notes'); }).then(function(list){
     if(!list.length){ nvMsg('沒有筆記可以匯出'); return; }
     var payload={app:'hwnote', ver:1, exported:Date.now(), notes:list};
     var json=JSON.stringify(payload);
