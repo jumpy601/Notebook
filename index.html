@@ -142,6 +142,11 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
   border-bottom:1.5px solid var(--accent-soft);
 }
 #nvList{flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:10px 12px;}
+.nvTools{
+  display:flex; align-items:center; gap:8px;
+  padding:8px 14px; border-bottom:1.5px solid var(--accent-soft);
+}
+#nvMsg{flex:1; font-size:11px; color:var(--muted); text-align:right;}
 .nvItem{
   display:flex; align-items:center; gap:8px;
   background:#fff; border:1.5px solid var(--accent-soft);
@@ -177,7 +182,7 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v19 游標保鍵盤</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v20 備份</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgNotes">📚</div>
   <div class="pill on" id="tgAuto">自動送出</div>
@@ -192,8 +197,14 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
     <button class="btn primary" id="nvNew">＋ 新筆記</button>
     <button class="btn" id="nvClose">關閉</button>
   </div>
+  <div class="nvTools">
+    <button class="btn" id="nvExport">⬇️ 匯出備份</button>
+    <button class="btn" id="nvImport">⬆️ 匯入備份</button>
+    <span id="nvMsg"></span>
+  </div>
   <div id="nvList"></div>
 </div>
+<input type="file" id="impIn" accept=".json,application/json" style="display:none">
 
 <div id="typeRow">
   <input id="typeIn" placeholder="" autocomplete="off">
@@ -1279,6 +1290,89 @@ idbOpen().then(function(d){
   /* storage unavailable (e.g. restricted webview) — run in-memory */
   db=null;
   curNoteId='n'+Date.now().toString(36);
+});
+
+/* ---------- backup: export / import ---------- */
+var nvMsgTimer=null;
+function nvMsg(t){
+  var el=document.getElementById('nvMsg');
+  el.textContent=t;
+  clearTimeout(nvMsgTimer);
+  nvMsgTimer=setTimeout(function(){ el.textContent=''; }, 5000);
+}
+function exportAll(){
+  if(!db){ nvMsg('此環境無儲存空間可匯出'); return; }
+  saveNow();
+  idbAll('notes').then(function(list){
+    if(!list.length){ nvMsg('沒有筆記可以匯出'); return; }
+    var payload={app:'hwnote', ver:1, exported:Date.now(), notes:list};
+    var json=JSON.stringify(payload);
+    var d=new Date();
+    function p2(n){ return ('0'+n).slice(-2); }
+    var fname='手寫小筆記備份_'+d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+'_'+p2(d.getHours())+p2(d.getMinutes())+'.json';
+    var blob=new Blob([json],{type:'application/json'});
+    function fallbackDl(){
+      var a=document.createElement('a');
+      a.href=URL.createObjectURL(blob);
+      a.download=fname;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 3000);
+      nvMsg('已匯出 '+list.length+' 篇筆記');
+    }
+    var file=null;
+    try{ file=new File([blob], fname, {type:'application/json'}); }catch(e){}
+    if(file && navigator.canShare && navigator.canShare({files:[file]})){
+      navigator.share({files:[file], title:fname}).then(function(){
+        nvMsg('已匯出 '+list.length+' 篇筆記');
+      }).catch(function(err){
+        if(err && err.name==='AbortError'){ nvMsg('已取消匯出'); }
+        else fallbackDl();
+      });
+    }else{
+      fallbackDl();
+    }
+  });
+}
+function importFile(f){
+  if(!db){ nvMsg('此環境無儲存空間可匯入'); return; }
+  var rd=new FileReader();
+  rd.onload=function(){
+    var data=null;
+    try{ data=JSON.parse(rd.result); }catch(e){}
+    if(!data || data.app!=='hwnote' || !Array.isArray(data.notes)){
+      nvMsg('匯入失敗：不是手寫小筆記的備份檔');
+      return;
+    }
+    idbAll('notes').then(function(existing){
+      var have={};
+      existing.forEach(function(r){ have[r.id]=1; });
+      var add=0, skip=0, bad=0;
+      var chain=Promise.resolve();
+      data.notes.forEach(function(rec){
+        if(!rec || !rec.id || !Array.isArray(rec.items)){ bad++; return; }
+        if(have[rec.id]){ skip++; return; }   /* never overwrite existing notes */
+        chain=chain.then(function(){ return idbPut('notes', rec); });
+        add++;
+      });
+      chain.then(function(){
+        refreshNotesList();
+        var msg='匯入完成：新增 '+add+' 篇';
+        if(skip) msg+='、略過 '+skip+' 篇已存在';
+        if(bad) msg+='、'+bad+' 篇格式錯誤';
+        nvMsg(msg);
+      }).catch(function(){ nvMsg('匯入時發生錯誤'); });
+    });
+  };
+  rd.readAsText(f);
+}
+document.getElementById('nvExport').addEventListener('click', exportAll);
+var impIn=document.getElementById('impIn');
+document.getElementById('nvImport').addEventListener('click', function(){ impIn.click(); });
+impIn.addEventListener('change', function(){
+  var f=impIn.files && impIn.files[0];
+  impIn.value='';
+  if(f) importFile(f);
 });
 
 /* ---------- custom font: jf open 粉圓 loaded as "HWNote" ---------- */
