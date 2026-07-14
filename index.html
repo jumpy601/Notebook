@@ -127,7 +127,7 @@ header .spacer{flex:1;}
 
 /* keyboard mode: pull toolbar rows up under the header, above the note */
 body.kb header{order:-3;}
-body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
+body.kb #blockRow, body.kb #styleRow, body.kb #selRow, body.kb #toolbar{order:-1;}
 
 #notesView{
   position:fixed; inset:0; z-index:50;
@@ -185,6 +185,32 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
 }
 .impActions .btn{flex:1 1 0;}
 
+#selRow{
+  display:none; align-items:center; gap:5px;
+  padding:7px 10px; background:#EBE7F7;
+  font-size:11px; color:var(--muted);
+}
+#selRow.show{display:flex;}
+#selRow span{flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+#selRow .btn{flex:0 0 auto; padding:7px 9px; background:#fff; font-size:11px;}
+
+#doodleRow{
+  display:none; align-items:center; gap:7px;
+  padding:7px 12px; background:#FFF3D6;
+  font-size:12px; color:var(--muted);
+}
+body.doodling #doodleRow{display:flex;}
+#doodleRow .dw{flex:0 0 auto; padding:7px 14px; background:#fff;}
+#doodleRow .dw.on{background:var(--accent-soft); color:#C4527A; font-weight:800;}
+#doodleRow .dot{
+  width:30px; height:30px; border-radius:999px; border:2.5px solid transparent;
+  flex:0 0 auto; touch-action:manipulation; padding:0;
+}
+#doodleRow .dot.on{border-color:var(--ink); box-shadow:0 0 0 2px #fff inset;}
+
+/* doodle mode: give the canvas real room */
+body.doodling #padWrap{flex-basis:56vh;}
+
 #padWrap{
   flex:0 0 33vh; min-height:180px; position:relative;
   background:var(--pad-bg);
@@ -210,8 +236,9 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v24 還原防競速</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v25 剪貼塗鴉</span></h1>
   <div class="spacer"></div>
+  <div class="pill" id="tgSel">✂️</div>
   <div class="pill" id="tgNotes">📚</div>
   <div class="pill on" id="tgAuto">自動送出</div>
   <div class="pill" id="tgPen">僅手寫筆</div>
@@ -282,6 +309,28 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
   </div>
 </div>
 
+<div id="selRow">
+  <span id="selHint">點選開始位置</span>
+  <button class="btn" id="selLine">選整行</button>
+  <button class="btn" id="selCut">✂️ 剪下</button>
+  <button class="btn" id="selCopy">📋 複製</button>
+  <button class="btn" id="selPaste">📌 貼上</button>
+  <button class="btn" id="selDone">完成</button>
+</div>
+
+<div id="doodleRow">
+  <span>粗細</span>
+  <button class="btn dw" data-w="1.6">細</button>
+  <button class="btn dw on" data-w="3">中</button>
+  <button class="btn dw" data-w="5.5">粗</button>
+  <span>顏色</span>
+  <button class="dot on" data-c="" style="background:#4A4458"></button>
+  <button class="dot" data-c="#E88FA5" style="background:#E88FA5"></button>
+  <button class="dot" data-c="#3E8A6C" style="background:#3E8A6C"></button>
+  <button class="dot" data-c="#E2A93B" style="background:#E2A93B"></button>
+  <button class="dot" data-c="#5B7FD4" style="background:#5B7FD4"></button>
+</div>
+
 <div id="toolbar">
   <div class="tbRow">
     <button class="btn primary" id="btnCommit">送出</button>
@@ -349,10 +398,10 @@ function pressureOf(e){
 }
 
 /* ---------- stroke drawing ---------- */
-function drawStroke(ctx, pts, map, wBase){
+function drawStroke(ctx, pts, map, wBase, color){
   if(!pts.length) return;
   ctx.lineCap='round'; ctx.lineJoin='round';
-  ctx.strokeStyle=INK; ctx.fillStyle=INK;
+  ctx.strokeStyle=color||INK; ctx.fillStyle=color||INK;
   if(pts.length===1){
     var q=map(pts[0]);
     ctx.beginPath();
@@ -605,6 +654,31 @@ function renderNote(){
     }
   }
 
+  /* selection highlight (only when no handwriting preview: list==items) */
+  if(selMode && !pg){
+    var sr=selRange();
+    if(sr){
+      nctx.fillStyle='rgba(232,143,165,0.22)';
+      for(var hi=sr[0]; hi<sr[1]; hi++){
+        var hp=posAt[hi]; if(!hp) continue;
+        if(items[hi] && (items[hi].t==='img'||items[hi].t==='doodle')){
+          for(var hb=0; hb<blockRects.length; hb++){
+            if(blockRects[hb].it===items[hi]){
+              var brr=blockRects[hb];
+              nctx.fillRect(brr.x-4, brr.y-4, brr.w+8, brr.h+8);
+              break;
+            }
+          }
+          continue;
+        }
+        var hn=posAt[hi+1];
+        var hw=(hn && hn.y===hp.y) ? (hn.x-hp.x) : hp.cs*0.7;
+        if(hw<3) hw=hp.cs*0.5;
+        nctx.fillRect(hp.x-1, hp.y-2, hw+2, hp.cs*1.35);
+      }
+    }
+  }
+
   /* items */
   nctx.textBaseline='top';
   for(var j=0;j<draw.length;j++){
@@ -646,11 +720,16 @@ function renderNote(){
       nctx.fillText(itm.label, q.x+2+q.cs*0.25, py+(ph-ts)/2);
     }else if(itm.t==='doodle'){
       (function(bx,by,bw,bh){
-        var wB = clamp(bw*0.011, 1, 2.6);
         for(var k=0;k<itm.s.length;k++){
-          drawStroke(nctx, itm.s[k], function(p){
+          var st=itm.s[k];
+          var old=Array.isArray(st);              /* v24 之前的舊格式 */
+          var pts=old? st : st.p;
+          var wB =old? clamp(bw*0.011, 1, 2.6)
+                     : Math.max(0.8, st.wr*bw);
+          var col=old? INK : (st.c||INK);
+          drawStroke(nctx, pts, function(p){
             return {x:bx + p.x*bw, y:by + p.y*bh};
-          }, wB);
+          }, wB, col);
         }
       })(q.x, q.y, q.w, q.h);
     }
@@ -699,10 +778,119 @@ function scrollNoteBottom(){
   if(lastCursorY - 12 < noteWrap.scrollTop) noteWrap.scrollTop = Math.max(0, lastCursorY - 12);
 }
 
+/* ---------- selection / clipboard ---------- */
+var selMode=false, selA=null, selB=null, clipboard=null;
+function indexAt(x,y){
+  var best=-1, bestD=Infinity;
+  for(var m=0;m<cursorMap.length;m++){
+    var p=cursorMap[m]; if(!p) continue;
+    var lh=p.cs*1.55;
+    var dy = (y<p.y) ? (p.y-y) : (y>p.y+lh ? y-(p.y+lh) : 0);
+    var d = dy*1000 + Math.abs(x-p.x);
+    if(d<bestD){ bestD=d; best=m; }
+  }
+  return best>=0 ? Math.min(best, items.length) : -1;
+}
+function cloneItems(arr){
+  var plain=arr.map(function(it){
+    var c={};
+    for(var k in it){ if(k.charAt(0)!=='_') c[k]=it[k]; }
+    return c;
+  });
+  return JSON.parse(JSON.stringify(plain)).map(function(it){
+    if(it.t==='img'){
+      var im=new Image(); it._img=im;
+      im.onload=function(){ renderNote(); };
+      im.src=it.src;
+    }
+    return it;
+  });
+}
+function lineRangeOf(idx){
+  var s=0, e=items.length;
+  for(var i=Math.min(idx,items.length)-1;i>=0;i--){
+    if(items[i].t==='nl'){ s=i; break; }
+  }
+  for(var j=Math.max(idx,s+1);j<items.length;j++){
+    if(items[j].t==='nl'){ e=j; break; }
+  }
+  return [s,e];
+}
+function selRange(){
+  if(selA===null||selB===null||selA===selB) return null;
+  return [Math.min(selA,selB), Math.max(selA,selB)];
+}
+var selRowEl=document.getElementById('selRow');
+var selHint=document.getElementById('selHint');
+function updateSelUI(){
+  var r=selRange();
+  if(!selMode){ selRowEl.classList.remove('show'); return; }
+  selRowEl.classList.add('show');
+  if(r) selHint.textContent='已選 '+(r[1]-r[0])+' 項';
+  else if(selA!==null) selHint.textContent='點選結束位置';
+  else if(clipboard) selHint.textContent='點選位置後貼上';
+  else selHint.textContent='點選開始位置';
+}
+function enterSel(){
+  selMode=true; selA=null; selB=null;
+  selItem=null; blockRow.classList.remove('show');
+  updateSelUI(); renderNote();
+}
+function exitSel(){
+  selMode=false; selA=null; selB=null;
+  updateSelUI(); renderNote();
+}
+document.getElementById('tgSel').addEventListener('click', function(){
+  if(selMode) exitSel(); else { setKb(false); enterSel(); }
+});
+document.getElementById('selLine').addEventListener('click', function(){
+  var base=(selA!==null)? selA : cursor;
+  var lr=lineRangeOf(base);
+  selA=lr[0]; selB=lr[1];
+  updateSelUI(); renderNote();
+});
+document.getElementById('selCut').addEventListener('click', function(){
+  var r=selRange(); if(!r) return;
+  clipboard=cloneItems(items.slice(r[0], r[1]));
+  items.splice(r[0], r[1]-r[0]);
+  cursor=r[0];
+  selA=null; selB=null;
+  selHint.textContent='已剪下 '+clipboard.length+' 項，點選位置後貼上';
+  renderNote(); scrollNoteBottom(); updateSelUI();
+  selHint.textContent='已剪下，點選位置後貼上';
+});
+document.getElementById('selCopy').addEventListener('click', function(){
+  var r=selRange(); if(!r) return;
+  clipboard=cloneItems(items.slice(r[0], r[1]));
+  selA=null; selB=null;
+  renderNote(); updateSelUI();
+  selHint.textContent='已複製，點選位置後貼上';
+});
+document.getElementById('selPaste').addEventListener('click', function(){
+  if(!clipboard || !clipboard.length){ selHint.textContent='剪貼簿是空的'; return; }
+  var cl=cloneItems(clipboard);
+  Array.prototype.splice.apply(items, [Math.min(cursor,items.length), 0].concat(cl));
+  cursor=Math.min(cursor,items.length-cl.length)+cl.length;
+  renderNote(); scrollNoteBottom();
+  selHint.textContent='已貼上';
+});
+document.getElementById('selDone').addEventListener('click', exitSel);
+
 /* ---------- block selection (tap on note) ---------- */
 noteCv.addEventListener('click', function(e){
   var r=noteCv.getBoundingClientRect();
   var x=e.clientX-r.left, y=e.clientY-r.top;
+
+  /* selection mode: taps pick the range instead */
+  if(selMode){
+    var si=indexAt(x,y);
+    if(si<0) return;
+    if(selA===null){ selA=si; }
+    else{ selB=si; }
+    updateSelUI(); renderNote();
+    return;
+  }
+
   /* todo checkboxes first */
   for(var k=0;k<todoRects.length;k++){
     var tr=todoRects[k];
@@ -728,15 +916,8 @@ noteCv.addEventListener('click', function(e){
 
   /* move cursor to the tapped position */
   commitGlyph();                     /* flush pending glyph first (re-renders & refreshes cursorMap) */
-  var best=-1, bestD=Infinity;
-  for(var m=0;m<cursorMap.length;m++){
-    var p=cursorMap[m]; if(!p) continue;
-    var lh=p.cs*1.55;
-    var dy = (y<p.y) ? (p.y-y) : (y>p.y+lh ? y-(p.y+lh) : 0);
-    var d = dy*1000 + Math.abs(x-p.x);
-    if(d<bestD){ bestD=d; best=m; }
-  }
-  if(best>=0) cursor = Math.min(best, items.length);
+  var best=indexAt(x,y);
+  if(best>=0) cursor = best;
   renderNote(); scrollNoteBottom();
 });
 blockSize.addEventListener('input', function(){
@@ -833,7 +1014,10 @@ function renderPad(){
   var all = pad.strokes.slice();
   if(pad.cur) all.push(pad.cur);
   for(var i=0;i<all.length;i++){
-    drawStroke(pctx, all[i].pts, function(p){ return {x:p.x,y:p.y}; }, wBase);
+    var st=all[i];
+    drawStroke(pctx, st.pts, function(p){ return {x:p.x,y:p.y}; },
+               doodleMode ? (st.w||doodleW) : wBase,
+               doodleMode ? (st.c||INK) : INK);
   }
   padHint.style.display = all.length ? 'none':'block';
 }
@@ -875,9 +1059,13 @@ function commitDoodle(){
   });
   var bw=Math.max(1,maxX-minX), bh=Math.max(1,maxY-minY);
   var s = pad.strokes.map(function(st){
-    return st.pts.map(function(p){
-      return {x:(p.x-minX)/bw, y:(p.y-minY)/bh, p:p.p};
-    });
+    return {
+      p: st.pts.map(function(pp){
+        return {x:(pp.x-minX)/bw, y:(pp.y-minY)/bh, p:pp.p};
+      }),
+      c: st.c||INK,
+      wr: (st.w||doodleW)/bw     /* width relative to bbox: scales with the block */
+    };
   });
   insertItem({
     t:'doodle', s:s, ar:bh/bw,
@@ -928,7 +1116,9 @@ padCv.addEventListener('pointerdown', function(e){
       pad.activeCell=cell;
     }
   }
-  pad.cur={pts:[{x:q.x,y:q.y,p:pressureOf(e)}]};
+  pad.cur={pts:[{x:q.x,y:q.y,p:pressureOf(e)}],
+           c: doodleMode ? doodleC : null,
+           w: doodleMode ? doodleW : null};
   try{ padCv.setPointerCapture(e.pointerId); }catch(err){}
   scheduleRender();
 });
@@ -972,6 +1162,7 @@ btnCommit.addEventListener('click', function(){
   if(doodleMode) commitDoodle();
   else commitGlyph();
 });
+var doodleW=3, doodleC=null;   /* null = 預設墨色 */
 var btnDoodle=document.getElementById('btnDoodle');
 btnDoodle.addEventListener('click', function(){
   if(!doodleMode){
@@ -987,9 +1178,21 @@ btnDoodle.addEventListener('click', function(){
     btnCommit.textContent='送出';
     padHint.textContent='✍️ 在格子裡書寫';
   }
+  document.body.classList.toggle('doodling', doodleMode);
   clearTimeout(pad.idleTimer);
   pad.activeCell=null;
-  scheduleRender();
+  setTimeout(layoutAll, 60);     /* pad size changed → recompute canvases */
+});
+var doodleRow=document.getElementById('doodleRow');
+doodleRow.addEventListener('click', function(e){
+  var b=e.target.closest('button'); if(!b) return;
+  if(b.classList.contains('dw')){
+    doodleW=parseFloat(b.getAttribute('data-w'));
+    doodleRow.querySelectorAll('.dw').forEach(function(el){ el.classList.toggle('on', el===b); });
+  }else if(b.classList.contains('dot')){
+    doodleC=b.getAttribute('data-c')||null;
+    doodleRow.querySelectorAll('.dot').forEach(function(el){ el.classList.toggle('on', el===b); });
+  }
 });
 var TAGS=[
   {label:'🔖 重要', bg:'#FBE4EA', fg:'#C4527A', bd:'#F3B8CB'},
