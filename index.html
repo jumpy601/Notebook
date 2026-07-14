@@ -163,6 +163,28 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
   -webkit-user-select:text; user-select:text;
 }
 
+#impPanel{
+  position:fixed; inset:0; z-index:60;
+  background:var(--paper);
+  display:none; flex-direction:column;
+  padding-top:env(safe-area-inset-top);
+}
+#impPanel.show{display:flex;}
+#impSummary{padding:10px 14px; font-size:12px; color:var(--muted); border-bottom:1.5px solid var(--accent-soft);}
+#impList{flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:10px 12px;}
+.impRow{
+  background:#fff; border:1.5px solid var(--accent-soft);
+  border-radius:16px; padding:12px 14px; margin-bottom:9px;
+}
+.impRow b{font-size:14px; display:block; margin-bottom:4px;}
+.impRow small{display:block; color:var(--muted); font-size:11px; line-height:1.6;}
+.impRow .btn{margin-top:8px; width:100%;}
+.impActions{
+  display:flex; gap:6px; padding:10px 12px calc(10px + env(safe-area-inset-bottom));
+  border-top:1.5px solid var(--accent-soft);
+}
+.impActions .btn{flex:1 1 0;}
+
 #padWrap{
   flex:0 0 33vh; min-height:180px; position:relative;
   background:var(--pad-bg);
@@ -188,7 +210,7 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v22 修命名備份</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v23 備份還原</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgNotes">📚</div>
   <div class="pill on" id="tgAuto">自動送出</div>
@@ -211,6 +233,21 @@ body.kb #blockRow, body.kb #styleRow, body.kb #toolbar{order:-1;}
   <div id="nvList"></div>
 </div>
 <input type="file" id="impIn" accept=".json,application/json" style="display:none">
+
+<div id="impPanel">
+  <div class="nvHead">
+    <b>📥 匯入內容確認</b>
+    <div class="spacer"></div>
+    <button class="btn" id="impCancel">取消</button>
+  </div>
+  <div id="impSummary"></div>
+  <div id="impList"></div>
+  <div class="impActions">
+    <button class="btn" id="impKeepAll">全部保留現有</button>
+    <button class="btn" id="impRestoreAll">全部還原備份</button>
+    <button class="btn primary" id="impApply">確認匯入</button>
+  </div>
+</div>
 
 <div id="typeRow">
   <input id="typeIn" placeholder="" autocomplete="off">
@@ -1243,6 +1280,13 @@ function refreshNotesList(){
       var sm=document.createElement('small'); sm.textContent=fmtDate(rec.updated);
       tx.appendChild(b); tx.appendChild(sm);
       row.appendChild(tx);
+      var exp=document.createElement('button');
+      exp.className='btn'; exp.textContent='📤';
+      exp.addEventListener('click', function(ev){
+        ev.stopPropagation();
+        exportOne(rec);
+      });
+      row.appendChild(exp);
       var ren=document.createElement('button');
       ren.className='btn'; ren.textContent='✏️';
       ren.addEventListener('click', function(ev){
@@ -1338,39 +1382,58 @@ function nvMsg(t){
   clearTimeout(nvMsgTimer);
   nvMsgTimer=setTimeout(function(){ el.textContent=''; }, 5000);
 }
+function shareJson(payload, fname, okMsg){
+  var blob=new Blob([JSON.stringify(payload)],{type:'application/json'});
+  function fallbackDl(){
+    var a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=fname;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 3000);
+    nvMsg(okMsg);
+  }
+  var file=null;
+  try{ file=new File([blob], fname, {type:'application/json'}); }catch(e){}
+  if(file && navigator.canShare && navigator.canShare({files:[file]})){
+    navigator.share({files:[file], title:fname}).then(function(){
+      nvMsg(okMsg);
+    }).catch(function(err){
+      if(err && err.name==='AbortError'){ nvMsg('已取消匯出'); }
+      else fallbackDl();
+    });
+  }else{
+    fallbackDl();
+  }
+}
+function backupName(suffix){
+  var d=new Date();
+  function p2(n){ return ('0'+n).slice(-2); }
+  return '手寫小筆記'+(suffix||'備份')+'_'+d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+'_'+p2(d.getHours())+p2(d.getMinutes())+'.json';
+}
 function exportAll(){
   if(!db){ nvMsg('此環境無儲存空間可匯出'); return; }
   saveNow().then(function(){ return idbAll('notes'); }).then(function(list){
     if(!list.length){ nvMsg('沒有筆記可以匯出'); return; }
-    var payload={app:'hwnote', ver:1, exported:Date.now(), notes:list};
-    var json=JSON.stringify(payload);
-    var d=new Date();
-    function p2(n){ return ('0'+n).slice(-2); }
-    var fname='手寫小筆記備份_'+d.getFullYear()+'-'+p2(d.getMonth()+1)+'-'+p2(d.getDate())+'_'+p2(d.getHours())+p2(d.getMinutes())+'.json';
-    var blob=new Blob([json],{type:'application/json'});
-    function fallbackDl(){
-      var a=document.createElement('a');
-      a.href=URL.createObjectURL(blob);
-      a.download=fname;
-      document.body.appendChild(a);
-      a.click();
-      setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 3000);
-      nvMsg('已匯出 '+list.length+' 篇筆記');
-    }
-    var file=null;
-    try{ file=new File([blob], fname, {type:'application/json'}); }catch(e){}
-    if(file && navigator.canShare && navigator.canShare({files:[file]})){
-      navigator.share({files:[file], title:fname}).then(function(){
-        nvMsg('已匯出 '+list.length+' 篇筆記');
-      }).catch(function(err){
-        if(err && err.name==='AbortError'){ nvMsg('已取消匯出'); }
-        else fallbackDl();
-      });
-    }else{
-      fallbackDl();
-    }
+    shareJson({app:'hwnote', ver:1, exported:Date.now(), notes:list},
+              backupName('備份'), '已匯出 '+list.length+' 篇筆記');
   });
 }
+function exportOne(rec){
+  if(!db){ nvMsg('此環境無儲存空間可匯出'); return; }
+  var pre = (rec.id===curNoteId) ? saveNow().then(function(){ return idbGet('notes', rec.id); })
+                                 : Promise.resolve(rec);
+  pre.then(function(r){
+    if(!r){ nvMsg('找不到這篇筆記'); return; }
+    var nm=(r.name||r.title||'筆記').replace(/[\\/:*?"<>|]/g,'').slice(0,20);
+    shareJson({app:'hwnote', ver:1, exported:Date.now(), notes:[r]},
+              backupName('_'+nm), '已匯出「'+(r.name||r.title)+'」');
+  });
+}
+
+/* import with conflict resolution: same-id notes are decided by the user */
+var pendingImport=null;
+var impPanel=document.getElementById('impPanel');
 function importFile(f){
   if(!db){ nvMsg('此環境無儲存空間可匯入'); return; }
   var rd=new FileReader();
@@ -1383,26 +1446,93 @@ function importFile(f){
     }
     idbAll('notes').then(function(existing){
       var have={};
-      existing.forEach(function(r){ have[r.id]=1; });
-      var add=0, skip=0, bad=0;
-      var chain=Promise.resolve();
+      existing.forEach(function(r){ have[r.id]=r; });
+      var news=[], conflicts=[], bad=0;
       data.notes.forEach(function(rec){
         if(!rec || !rec.id || !Array.isArray(rec.items)){ bad++; return; }
-        if(have[rec.id]){ skip++; return; }   /* never overwrite existing notes */
-        chain=chain.then(function(){ return idbPut('notes', rec); });
-        add++;
+        if(have[rec.id]) conflicts.push({mine:have[rec.id], theirs:rec, restore:false});
+        else news.push(rec);
       });
-      chain.then(function(){
-        refreshNotesList();
-        var msg='匯入完成：新增 '+add+' 篇';
-        if(skip) msg+='、略過 '+skip+' 篇已存在';
-        if(bad) msg+='、'+bad+' 篇格式錯誤';
-        nvMsg(msg);
-      }).catch(function(){ nvMsg('匯入時發生錯誤'); });
+      if(!news.length && !conflicts.length){
+        nvMsg(bad? '匯入失敗：'+bad+' 篇格式錯誤' : '備份檔裡沒有筆記');
+        return;
+      }
+      pendingImport={news:news, conflicts:conflicts, bad:bad};
+      if(!conflicts.length){ applyImport(); }     /* nothing to decide */
+      else renderImpPanel();
     });
   };
   rd.readAsText(f);
 }
+function renderImpPanel(){
+  var p=pendingImport;
+  document.getElementById('impSummary').textContent=
+    '將新增 '+p.news.length+' 篇'+
+    (p.bad? '、'+p.bad+' 篇格式錯誤已略過':'')+
+    '。以下 '+p.conflicts.length+' 篇與現有筆記相同 ID，請逐篇選擇：';
+  var list=document.getElementById('impList');
+  list.innerHTML='';
+  p.conflicts.forEach(function(c){
+    var row=document.createElement('div'); row.className='impRow';
+    var b=document.createElement('b');
+    b.textContent=c.theirs.name||c.theirs.title||'（未命名）';
+    var sm=document.createElement('small');
+    sm.textContent='現有：'+(c.mine.name||c.mine.title||'（未命名）')+'（更新 '+fmtDate(c.mine.updated)+'）\n'
+                  +'備份：'+(c.theirs.name||c.theirs.title||'（未命名）')+'（更新 '+fmtDate(c.theirs.updated)+'）';
+    sm.style.whiteSpace='pre-line';
+    var ch=document.createElement('button');
+    ch.className='btn';
+    function paint(){
+      ch.textContent = c.restore ? '↩️ 還原成備份版本' : '🔒 保留現有版本';
+      ch.classList.toggle('primary', c.restore);
+    }
+    ch.addEventListener('click', function(){ c.restore=!c.restore; paint(); });
+    paint();
+    row.appendChild(b); row.appendChild(sm); row.appendChild(ch);
+    list.appendChild(row);
+  });
+  impPanel.classList.add('show');
+}
+function applyImport(){
+  var p=pendingImport;
+  if(!p) return;
+  pendingImport=null;
+  impPanel.classList.remove('show');
+  var restored=p.conflicts.filter(function(c){ return c.restore; });
+  var kept=p.conflicts.length-restored.length;
+  var chain=Promise.resolve();
+  p.news.forEach(function(rec){
+    chain=chain.then(function(){ return idbPut('notes', rec); });
+  });
+  var reloadCur=null;
+  restored.forEach(function(c){
+    chain=chain.then(function(){ return idbPut('notes', c.theirs); });
+    if(c.theirs.id===curNoteId) reloadCur=c.theirs;
+  });
+  chain.then(function(){
+    if(reloadCur) loadNote(reloadCur);   /* restored the open note → reload editor */
+    refreshNotesList();
+    var msg='匯入完成：新增 '+p.news.length+' 篇';
+    if(restored.length) msg+='、還原 '+restored.length+' 篇';
+    if(kept) msg+='、保留 '+kept+' 篇現有';
+    if(p.bad) msg+='、'+p.bad+' 篇格式錯誤';
+    nvMsg(msg);
+  }).catch(function(){ nvMsg('匯入時發生錯誤'); });
+}
+document.getElementById('impCancel').addEventListener('click', function(){
+  pendingImport=null; impPanel.classList.remove('show'); nvMsg('已取消匯入');
+});
+document.getElementById('impKeepAll').addEventListener('click', function(){
+  if(!pendingImport) return;
+  pendingImport.conflicts.forEach(function(c){ c.restore=false; });
+  renderImpPanel();
+});
+document.getElementById('impRestoreAll').addEventListener('click', function(){
+  if(!pendingImport) return;
+  pendingImport.conflicts.forEach(function(c){ c.restore=true; });
+  renderImpPanel();
+});
+document.getElementById('impApply').addEventListener('click', applyImport);
 document.getElementById('nvExport').addEventListener('click', exportAll);
 var impIn=document.getElementById('impIn');
 document.getElementById('nvImport').addEventListener('click', function(){ impIn.click(); });
