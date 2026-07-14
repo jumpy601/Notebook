@@ -236,7 +236,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v25 剪貼塗鴉</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v26 剪貼改良</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgSel">✂️</div>
   <div class="pill" id="tgNotes">📚</div>
@@ -661,6 +661,7 @@ function renderNote(){
       nctx.fillStyle='rgba(232,143,165,0.22)';
       for(var hi=sr[0]; hi<sr[1]; hi++){
         var hp=posAt[hi]; if(!hp) continue;
+        if(items[hi] && items[hi].t==='nl') continue;   /* nl 視覺在上一行行尾，不畫高亮 */
         if(items[hi] && (items[hi].t==='img'||items[hi].t==='doodle')){
           for(var hb=0; hb<blockRects.length; hb++){
             if(blockRects[hb].it===items[hi]){
@@ -779,7 +780,7 @@ function scrollNoteBottom(){
 }
 
 /* ---------- selection / clipboard ---------- */
-var selMode=false, selA=null, selB=null, clipboard=null;
+var selMode=false, selA=null, selB=null, clipboard=null, pastePhase=false;
 function indexAt(x,y){
   var best=-1, bestD=Infinity;
   for(var m=0;m<cursorMap.length;m++){
@@ -826,18 +827,18 @@ function updateSelUI(){
   var r=selRange();
   if(!selMode){ selRowEl.classList.remove('show'); return; }
   selRowEl.classList.add('show');
-  if(r) selHint.textContent='已選 '+(r[1]-r[0])+' 項';
+  if(pastePhase) selHint.textContent='游標點到哪、就貼到哪';
+  else if(r) selHint.textContent='已選 '+(r[1]-r[0])+' 項';
   else if(selA!==null) selHint.textContent='點選結束位置';
-  else if(clipboard) selHint.textContent='點選位置後貼上';
   else selHint.textContent='點選開始位置';
 }
 function enterSel(){
-  selMode=true; selA=null; selB=null;
+  selMode=true; selA=null; selB=null; pastePhase=false;
   selItem=null; blockRow.classList.remove('show');
   updateSelUI(); renderNote();
 }
 function exitSel(){
-  selMode=false; selA=null; selB=null;
+  selMode=false; selA=null; selB=null; pastePhase=false;
   updateSelUI(); renderNote();
 }
 document.getElementById('tgSel').addEventListener('click', function(){
@@ -846,25 +847,24 @@ document.getElementById('tgSel').addEventListener('click', function(){
 document.getElementById('selLine').addEventListener('click', function(){
   var base=(selA!==null)? selA : cursor;
   var lr=lineRangeOf(base);
-  selA=lr[0]; selB=lr[1];
+  selA=lr[0]; selB=lr[1]; pastePhase=false;
   updateSelUI(); renderNote();
 });
 document.getElementById('selCut').addEventListener('click', function(){
-  var r=selRange(); if(!r) return;
+  var r=selRange(); if(!r){ selHint.textContent='請先選好範圍（點兩處或按選整行）'; return; }
   clipboard=cloneItems(items.slice(r[0], r[1]));
   items.splice(r[0], r[1]-r[0]);
   cursor=r[0];
-  selA=null; selB=null;
-  selHint.textContent='已剪下 '+clipboard.length+' 項，點選位置後貼上';
+  selA=null; selB=null; pastePhase=true;
   renderNote(); scrollNoteBottom(); updateSelUI();
-  selHint.textContent='已剪下，點選位置後貼上';
+  selHint.textContent='已剪下 '+clipboard.length+' 項，點好位置後按貼上';
 });
 document.getElementById('selCopy').addEventListener('click', function(){
-  var r=selRange(); if(!r) return;
+  var r=selRange(); if(!r){ selHint.textContent='請先選好範圍（點兩處或按選整行）'; return; }
   clipboard=cloneItems(items.slice(r[0], r[1]));
-  selA=null; selB=null;
+  selA=null; selB=null; pastePhase=true;
   renderNote(); updateSelUI();
-  selHint.textContent='已複製，點選位置後貼上';
+  selHint.textContent='已複製 '+clipboard.length+' 項，點好位置後按貼上';
 });
 document.getElementById('selPaste').addEventListener('click', function(){
   if(!clipboard || !clipboard.length){ selHint.textContent='剪貼簿是空的'; return; }
@@ -881,12 +881,17 @@ noteCv.addEventListener('click', function(e){
   var r=noteCv.getBoundingClientRect();
   var x=e.clientX-r.left, y=e.clientY-r.top;
 
-  /* selection mode: taps pick the range instead */
+  /* selection mode: cursor follows every tap (visible feedback);
+     range anchors only while actively selecting */
   if(selMode){
     var si=indexAt(x,y);
     if(si<0) return;
-    if(selA===null){ selA=si; }
-    else{ selB=si; }
+    commitGlyph();
+    cursor=si;
+    if(!pastePhase){
+      if(selA===null){ selA=si; }
+      else{ selB=si; }
+    }
     updateSelUI(); renderNote();
     return;
   }
