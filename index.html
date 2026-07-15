@@ -297,7 +297,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v30 修同步格式</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v31 照片外掛</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgSel">✂️</div>
@@ -1552,7 +1552,7 @@ function saveNow(){
   cloudPushSoon(rec);
   return p;
 }
-function saveSoon(){ clearTimeout(saveTimer); saveTimer=setTimeout(function(){ saveNow(); cloudSoon(); }, 900); }
+function saveSoon(){ clearTimeout(saveTimer); saveTimer=setTimeout(saveNow, 900); }
 
 function resetEditor(){
   pad.strokes=[]; pad.cur=null; pad.bbox=null; pad.activeCell=null;
@@ -1857,7 +1857,11 @@ function applyImport(){
     var pulledCur=false;
     p.conflicts.forEach(function(c){
       if(c.restore){
-        chain=chain.then(function(){ return idbPut('notes', c.theirs); })
+        chain=chain.then(function(){ return inflateNote(c.theirs); })
+                   .then(function(rec){
+                     if(!rec || !rec.id) return;
+                     return idbPut('notes', rec);
+                   })
                    .then(function(){ return loadBases().then(function(){ bases[c.theirs.id]=c.theirs.updated; return saveBases(); }); });
         if(c.theirs.id===curNoteId) pulledCur=true;
       }else{
@@ -1976,14 +1980,61 @@ function cloudPushSoon(rec){
   clearTimeout(cloudTimer);
   cloudTimer=setTimeout(function(){ pushNote(rec); }, 1500);
 }
+function blobCol(){
+  return fb.fs.collection('tenants').doc(fb.user.uid).collection('blobs');
+}
+/* deflate: externalize photos into their own cloud docs; note body → JSON string
+   (also sidesteps Firestore's nested-array ban on handwriting strokes) */
+function deflateNote(rec){
+  var lite=JSON.parse(JSON.stringify(rec));
+  var blobs=[];
+  (lite.items||[]).forEach(function(it, i){
+    if(it.t==='img' && typeof it.src==='string' && it.src.length>2000){
+      var bid=rec.id+'_'+i;
+      blobs.push({id:bid, data:it.src});
+      it.src='@blob:'+bid;
+    }
+  });
+  return {
+    doc:{ id:rec.id, updated:rec.updated||0, title:rec.title||'',
+          name:rec.name||null, data:JSON.stringify(lite) },
+    blobs:blobs
+  };
+}
+/* inflate: cloud wrapper doc → full local record (fetches referenced photos) */
+function inflateNote(c){
+  if(!c || !c.data) return Promise.resolve(c||null);
+  var rec=null;
+  try{ rec=JSON.parse(c.data); }catch(e){ return Promise.resolve(null); }
+  var refs=[];
+  (rec.items||[]).forEach(function(it){
+    if(it.t==='img' && typeof it.src==='string' && it.src.indexOf('@blob:')===0) refs.push(it);
+  });
+  if(!refs.length) return Promise.resolve(rec);
+  return Promise.all(refs.map(function(it){
+    return blobCol().doc(it.src.slice(6)).get().then(function(d){
+      it.src=(d.exists && d.data().data) || '';
+    }).catch(function(){ it.src=''; });
+  })).then(function(){ return rec; });
+}
 function pushNote(rec){
   if(!fb.user) return Promise.resolve();
-  if(JSON.stringify(rec).length > 950000){
-    nvMsg('「'+(rec.name||rec.title)+'」超過雲端單篇上限，僅保存在本機');
+  var pk=deflateNote(rec);
+  if(pk.doc.data.length > 950000){
+    /* 照片已外掛後仍超過（極端長的純手寫），才會走到這裡 */
+    nvMsg('「'+(rec.name||rec.title)+'」內容過大，暫僅保存在本機（建議分篇）');
     return Promise.resolve();
   }
   setCloudUI('sync');
-  return cloudCol().doc(rec.id).set(rec).then(function(){
+  var chain=Promise.resolve();
+  pk.blobs.forEach(function(b){
+    chain=chain.then(function(){
+      return blobCol().doc(b.id).set({note:rec.id, data:b.data});
+    });
+  });
+  return chain.then(function(){
+    return cloudCol().doc(rec.id).set(pk.doc);
+  }).then(function(){
     return loadBases().then(function(){ bases[rec.id]=rec.updated; return saveBases(); });
   }).then(function(){ setCloudUI('on','☁️ 已同步 '+fmtDate(Date.now())); })
     .catch(function(){ setCloudUI('on','☁️ 推送失敗，稍後會再試'); });
@@ -1992,6 +2043,9 @@ function cloudDeleteNote(id){
   loadBases().then(function(){ delete bases[id]; saveBases(); });
   if(fb.user){
     cloudCol().doc(id).delete().catch(function(){ addTombstone(id); });
+    blobCol().where('note','==',id).get().then(function(snap){
+      snap.forEach(function(d){ d.ref.delete().catch(function(){}); });
+    }).catch(function(){});
   }else{
     addTombstone(id);
   }
@@ -2047,8 +2101,11 @@ function syncNow(){
     }
     localOnly.forEach(function(l){ pushes.push(l); }); /* merge local-only notes up */
     pulls.forEach(function(c){
-      chain=chain.then(function(){ return idbPut('notes', c); })
-                 .then(function(){ bases[c.id]=c.updated; });
+      chain=chain.then(function(){ return inflateNote(c); })
+                 .then(function(rec){
+                   if(!rec || !rec.id) return;
+                   return idbPut('notes', rec).then(function(){ bases[rec.id]=c.updated; });
+                 });
     });
     pushes.forEach(function(l){
       chain=chain.then(function(){ return pushNote(l); });
@@ -2172,217 +2229,6 @@ document.addEventListener('visibilitychange', function(){
   if(!document.hidden && fb.user && Date.now()-lastSyncAt>30000) syncNow();
 });
 window.addEventListener('online', function(){ if(fb.user) syncNow(); });
-
-/* ---------- cloud sync (Firebase Auth + Firestore) ---------- */
-var FB_CONFIG={
-  apiKey: "AIzaSyBZFl413ZHEEAFt9B6rHolzq___ZldNZVo",
-  authDomain: "notebook-b7a06.firebaseapp.com",
-  projectId: "notebook-b7a06",
-  storageBucket: "notebook-b7a06.firebasestorage.app",
-  messagingSenderId: "730615054683",
-  appId: "1:730615054683:web:d3655e4f41e740da98da7e"
-};
-var fbAuth=null, fbDb=null, fbUser=null, syncing=false;
-var cloudView=document.getElementById('cloudView');
-var cvMsgEl=document.getElementById('cvMsg');
-var cvMsgTimer=null;
-function cvMsg(t){
-  cvMsgEl.textContent=t||'';
-  clearTimeout(cvMsgTimer);
-  if(t) cvMsgTimer=setTimeout(function(){ cvMsgEl.textContent=''; }, 6000);
-}
-function cvStatus(t){ document.getElementById('cvStatus').textContent=t; }
-
-try{
-  if(window.firebase && FB_CONFIG.apiKey.indexOf('YOUR_')!==0){
-    firebase.initializeApp(FB_CONFIG);
-    fbAuth=firebase.auth();
-    fbDb=firebase.firestore();
-    fbAuth.onAuthStateChanged(function(u){
-      fbUser=u;
-      document.body.classList.toggle('signedin', !!u);
-      document.getElementById('tgCloud').classList.toggle('cloud-on', !!u);
-      if(u){
-        document.getElementById('cvWho').textContent=u.email||'（帳號）';
-        guardAccountSwitch(u.uid).then(function(){ syncNow(true); });
-      }else{
-        cvStatus('—');
-      }
-    });
-  }
-}catch(e){ fbAuth=null; fbDb=null; }
-
-/* account switch guard: never let one account's local notes leak into another's cloud */
-function guardAccountSwitch(uid){
-  var prev=null;
-  try{ prev=localStorage.getItem('hwnote_uid'); }catch(e){}
-  if(prev && prev!==uid){
-    /* different account on this device → wipe local notes before syncing */
-    return idbAll('notes').then(function(list){
-      var chain=Promise.resolve();
-      list.forEach(function(r){ chain=chain.then(function(){ return idbDel('notes', r.id); }); });
-      return chain;
-    }).then(function(){
-      try{ localStorage.setItem('hwnote_uid', uid); }catch(e){}
-      items=[]; headStyle.ls=null; headStyle.done=false; headStyle.ind=0;
-      curNoteId=null; curNoteName=null;
-      cvMsg('偵測到換帳號，已清除本機筆記，改從雲端還原');
-      return null;
-    });
-  }
-  try{ localStorage.setItem('hwnote_uid', uid); }catch(e){}
-  return Promise.resolve();
-}
-
-function notesCol(){
-  return fbDb.collection('users').doc(fbUser.uid).collection('notes');
-}
-
-/* two-way sync: newer `updated` wins; both-changed cases go to the confirm panel */
-function syncNow(silent){
-  if(!fbUser || !fbDb || !db){ if(!silent) cvMsg('尚未登入或無本機儲存空間'); return Promise.resolve(); }
-  if(syncing) return Promise.resolve();
-  syncing=true;
-  cvStatus('同步中…');
-  return saveNow().then(function(){
-    clearTimeout(saveTimer);
-    return Promise.all([ idbAll('notes'), notesCol().get() ]);
-  }).then(function(res){
-    var locals=res[0], snap=res[1];
-    var remote={};
-    snap.forEach(function(d){ remote[d.id]=d.data(); });
-    var localMap={};
-    locals.forEach(function(r){ localMap[r.id]=r; });
-
-    var toPush=[], toPull=[], conflicts=[];
-    /* local → cloud */
-    locals.forEach(function(L){
-      var R=remote[L.id];
-      if(!R){ toPush.push(L); return; }
-      if((L.updated||0) > (R.updated||0)) toPush.push(L);
-      else if((R.updated||0) > (L.updated||0)) toPull.push(R);
-      /* equal timestamps → already in sync */
-    });
-    /* cloud-only → pull */
-    Object.keys(remote).forEach(function(id){
-      if(!localMap[id]) toPull.push(remote[id]);
-    });
-
-    var chain=Promise.resolve();
-    var tooBig=0;
-    toPush.forEach(function(L){
-      /* Firestore 禁止巢狀陣列（手寫筆畫就是），整篇序列化成字串存 */
-      var payload=JSON.stringify(L);
-      if(payload.length > 950000){ tooBig++; return; }   /* 單篇文件 1MB 上限 */
-      chain=chain.then(function(){
-        return notesCol().doc(L.id).set({
-          id: L.id,
-          updated: L.updated||0,
-          title: L.title||'',
-          name: L.name||null,
-          data: payload
-        });
-      });
-    });
-    var reloadCur=false;
-    toPull.forEach(function(R){
-      var rec=null;
-      try{ rec=JSON.parse(R.data); }catch(e){}
-      if(!rec || !rec.id) return;                        /* 壞文件直接略過 */
-      chain=chain.then(function(){ return idbPut('notes', rec); });
-      if(rec.id===curNoteId) reloadCur=true;
-    });
-    return chain.then(function(){
-      return {push:toPush.length-tooBig, pull:toPull.length, reload:reloadCur, big:tooBig};
-    });
-  }).then(function(r){
-    syncing=false;
-    var t=new Date();
-    cvStatus('上次同步 '+('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2)+
-             '（上傳 '+r.push+'、下載 '+r.pull+'）'+
-             (r.big? '⚠️ '+r.big+' 篇超過雲端單篇上限未上傳（照片過多，請分篇）':''));
-    if(r.reload && curNoteId){
-      return idbGet('notes', curNoteId).then(function(fresh){
-        if(fresh) loadNote(fresh);
-      });
-    }
-    if(!curNoteId){
-      /* after an account switch there may be no open note */
-      return idbAll('notes').then(function(list){
-        list.sort(function(a,b){ return b.updated-a.updated; });
-        if(list.length) loadNote(list[0]); else newNote();
-      });
-    }
-  }).then(function(){
-    refreshNotesList();
-    if(!silent) cvMsg('同步完成');
-  }).catch(function(err){
-    syncing=false;
-    cvStatus('同步失敗');
-    cvMsg('同步失敗：'+((err&&err.message)||'未知錯誤'));
-  });
-}
-
-/* push after local edits (debounced, only when signed in) */
-var cloudTimer=null;
-function cloudSoon(){
-  if(!fbUser || !fbDb) return;
-  clearTimeout(cloudTimer);
-  cloudTimer=setTimeout(function(){ syncNow(true); }, 4000);
-}
-
-document.getElementById('tgCloud').addEventListener('click', function(){
-  setKb(false);
-  if(!fbAuth){ cvMsg('雲端功能未啟用'); }
-  cloudView.classList.add('show');
-});
-document.getElementById('cvClose').addEventListener('click', function(){
-  cloudView.classList.remove('show');
-});
-document.getElementById('cvLogin').addEventListener('click', function(){
-  var e=document.getElementById('cvEmail').value.trim();
-  var p=document.getElementById('cvPw').value;
-  if(!e||!p){ cvMsg('請輸入電子郵件和密碼'); return; }
-  cvMsg('登入中…');
-  fbAuth.signInWithEmailAndPassword(e,p).then(function(){
-    document.getElementById('cvPw').value='';
-    cvMsg('登入成功，開始同步');
-  }).catch(function(err){ cvMsg('登入失敗：'+authErr(err)); });
-});
-document.getElementById('cvSignup').addEventListener('click', function(){
-  var e=document.getElementById('cvEmail').value.trim();
-  var p=document.getElementById('cvPw').value;
-  if(!e||!p){ cvMsg('請輸入電子郵件和密碼'); return; }
-  cvMsg('註冊中…');
-  fbAuth.createUserWithEmailAndPassword(e,p).then(function(){
-    document.getElementById('cvPw').value='';
-    cvMsg('註冊成功，已自動登入');
-  }).catch(function(err){ cvMsg('註冊失敗：'+authErr(err)); });
-});
-document.getElementById('cvSyncNow').addEventListener('click', function(){ syncNow(false); });
-document.getElementById('cvLogout').addEventListener('click', function(){
-  var b=document.getElementById('cvLogout');
-  if(b.textContent==='登出'){
-    b.textContent='確定登出?';
-    setTimeout(function(){ b.textContent='登出'; }, 2500);
-    return;
-  }
-  b.textContent='登出';
-  syncNow(true).then(function(){
-    return fbAuth.signOut();
-  }).then(function(){ cvMsg('已登出（本機筆記保留）'); });
-});
-function authErr(err){
-  var c=(err&&err.code)||'';
-  if(c.indexOf('invalid-email')>-1) return '電子郵件格式不正確';
-  if(c.indexOf('weak-password')>-1) return '密碼至少要 6 位';
-  if(c.indexOf('email-already-in-use')>-1) return '這個信箱已註冊過，請直接登入';
-  if(c.indexOf('wrong-password')>-1 || c.indexOf('invalid-credential')>-1) return '帳號或密碼錯誤';
-  if(c.indexOf('user-not-found')>-1) return '查無此帳號，請先註冊';
-  if(c.indexOf('network')>-1) return '沒有網路連線';
-  if(c.indexOf('unauthorized-domain')>-1) return '此網域未授權（請到 Firebase 加入授權網域）';
-  return (err&&err.message)||'未知錯誤';
-}
 
 /* ---------- offline: register service worker ---------- */
 if('serviceWorker' in navigator){
