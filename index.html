@@ -297,7 +297,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v34 筆跡瘦身</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v35 推送前瘦身</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgSel">✂️</div>
@@ -2060,6 +2060,10 @@ function inflateNote(c){
 }
 function pushNote(rec){
   if(!fb.user) return Promise.resolve();
+  /* compact strokes before pushing — covers notes never opened this session */
+  if(compactRec(rec)){
+    idbPut('notes', rec).catch(function(){});   /* persist slimmed copy locally too */
+  }
   var pk=deflateNote(rec);
   if(pk.doc.data.length > 950000){
     /* 診斷：算出哪種元素佔了體積 */
