@@ -11,6 +11,9 @@
 <meta name="apple-mobile-web-app-title" content="手寫小筆記">
 <link rel="apple-touch-icon" href="icon-180.png">
 <meta name="theme-color" content="#FFF9F0">
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <style>
 :root{
   --paper:#FFF9F0;
@@ -163,6 +166,50 @@ body.kb #blockRow, body.kb #styleRow, body.kb #selRow, body.kb #toolbar{order:-1
   -webkit-user-select:text; user-select:text;
 }
 
+#authPanel{
+  position:fixed; inset:0; z-index:70;
+  background:var(--paper);
+  display:none; flex-direction:column;
+  padding-top:env(safe-area-inset-top);
+}
+#authPanel.show{display:flex;}
+.authBody{display:flex; flex-direction:column; gap:10px; padding:18px 16px; max-width:420px; width:100%; margin:0 auto;}
+.authBody input{
+  font-family:inherit; font-size:16px; padding:11px 14px;
+  border:1.5px solid var(--rule); border-radius:12px; background:#fff;
+  outline:none; color:var(--ink);
+  -webkit-user-select:text; user-select:text;
+}
+#authErr{color:var(--danger); font-size:12px; min-height:16px;}
+#cloudStatus{flex:1; font-size:12px; color:var(--muted);}
+.pill.cloudon{background:var(--mint-soft); color:#3E8A6C; border-color:var(--mint);}
+.pill.cloudsync{background:#FFF3D6; color:#B07D2B; border-color:#F2DCA0;}
+
+#cloudView{
+  position:fixed; inset:0; z-index:55;
+  background:var(--paper);
+  display:none; flex-direction:column;
+  padding-top:env(safe-area-inset-top);
+}
+#cloudView.show{display:flex;}
+#cvBody{padding:16px 16px calc(16px + env(safe-area-inset-bottom));}
+#cvBody input{
+  width:100%; font-family:inherit; font-size:16px;
+  padding:11px 14px; margin-bottom:9px;
+  border:1.5px solid var(--rule); border-radius:14px;
+  background:#fff; color:var(--ink); outline:none;
+  -webkit-user-select:text; user-select:text;
+}
+.cvNote{font-size:12px; color:var(--muted); line-height:1.7; margin:0 0 12px;}
+.cvNote b{color:var(--ink);}
+.cvBtns{display:flex; gap:8px;}
+.cvBtns .btn{flex:1 1 0; padding:11px 8px;}
+.cvMsg{font-size:12px; color:var(--accent); margin:14px 0 0; min-height:18px; line-height:1.6;}
+#cvIn{display:none;}
+body.signedin #cvIn{display:block;}
+body.signedin #cvOut{display:none;}
+.pill.cloud-on{background:#E4F5EE; color:#3E8A6C; border-color:var(--mint);}
+
 #impPanel{
   position:fixed; inset:0; z-index:60;
   background:var(--paper);
@@ -236,8 +283,9 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v26 剪貼改良</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v27 雲端同步</span></h1>
   <div class="spacer"></div>
+  <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgSel">✂️</div>
   <div class="pill" id="tgNotes">📚</div>
   <div class="pill on" id="tgAuto">自動送出</div>
@@ -257,9 +305,59 @@ body.doodling #padWrap{flex-basis:56vh;}
     <button class="btn" id="nvImport">⬆️ 匯入備份</button>
     <span id="nvMsg"></span>
   </div>
+  <div class="nvTools" id="cloudRow">
+    <span id="cloudStatus">☁️ 未登入</span>
+    <button class="btn" id="cloudUpload" style="display:none">上傳本機筆記</button>
+    <button class="btn" id="cloudSync" style="display:none">立即同步</button>
+    <button class="btn" id="cloudLogin">登入</button>
+    <button class="btn" id="cloudLogout" style="display:none">登出</button>
+  </div>
   <div id="nvList"></div>
 </div>
+
+<div id="authPanel">
+  <div class="nvHead">
+    <b>☁️ 雲端同步登入</b>
+    <div class="spacer"></div>
+    <button class="btn" id="authCancel">取消</button>
+  </div>
+  <div class="authBody">
+    <input type="email" id="authEmail" placeholder="Email" autocomplete="username">
+    <input type="password" id="authPw" placeholder="密碼（至少 6 碼）" autocomplete="current-password">
+    <div id="authErr"></div>
+    <button class="btn primary" id="authGo">登入</button>
+    <button class="btn" id="authReg">還沒有帳號？註冊一個</button>
+  </div>
+</div>
 <input type="file" id="impIn" accept=".json,application/json" style="display:none">
+
+<div id="cloudView">
+  <div class="nvHead">
+    <b>☁️ 雲端同步</b>
+    <div class="spacer"></div>
+    <button class="btn" id="cvClose">關閉</button>
+  </div>
+  <div id="cvBody">
+    <div id="cvOut">
+      <p class="cvNote">登入後，筆記會自動同步到雲端，換手機或平板登入同一個帳號就能繼續寫。</p>
+      <input id="cvEmail" type="email" placeholder="電子郵件" autocomplete="username">
+      <input id="cvPw" type="password" placeholder="密碼（至少 6 位）" autocomplete="current-password">
+      <div class="cvBtns">
+        <button class="btn primary" id="cvLogin">登入</button>
+        <button class="btn" id="cvSignup">註冊新帳號</button>
+      </div>
+    </div>
+    <div id="cvIn">
+      <p class="cvNote">已登入：<b id="cvWho"></b></p>
+      <p class="cvNote" id="cvStatus">—</p>
+      <div class="cvBtns">
+        <button class="btn primary" id="cvSyncNow">立即同步</button>
+        <button class="btn warn" id="cvLogout">登出</button>
+      </div>
+    </div>
+    <p class="cvMsg" id="cvMsg"></p>
+  </div>
+</div>
 
 <div id="impPanel">
   <div class="nvHead">
@@ -954,14 +1052,14 @@ imgIn.addEventListener('change', function(){
   rd.onload=function(){
     var raw=new Image();
     raw.onload=function(){
-      /* downscale big photos so the note stays light */
-      var MAX=1280;
+      /* downscale for Firestore's 1MB doc limit: 800px/q0.7 ≈ 80-160KB per photo */
+      var MAX=800;
       var sc=Math.min(1, MAX/Math.max(raw.width, raw.height));
       var cw=Math.round(raw.width*sc), chh=Math.round(raw.height*sc);
       var oc=document.createElement('canvas');
       oc.width=cw; oc.height=chh;
       oc.getContext('2d').drawImage(raw,0,0,cw,chh);
-      var src=oc.toDataURL('image/jpeg',0.82);
+      var src=oc.toDataURL('image/jpeg',0.7);
       var img=new Image();
       var item={t:'img', src:src, ar:chh/cw, dw:0.6, _img:img};
       img.onload=function(){ renderNote(); };
@@ -1414,15 +1512,17 @@ function noteTitle(){
 }
 function saveNow(){
   if(!db || !curNoteId || loading) return Promise.resolve();
-  var p=idbPut('notes',{
+  var rec={
     id:curNoteId, items:serializeItems(),
     head:{ls:headStyle.ls, done:headStyle.done},
     charSize:charSize, title:noteTitle(), name:curNoteName||null, updated:Date.now()
-  }).catch(function(){});
+  };
+  var p=idbPut('notes', rec).catch(function(){});
   idbPut('meta',{k:'lastId', v:curNoteId}).catch(function(){});
+  cloudPushSoon(rec);
   return p;
 }
-function saveSoon(){ clearTimeout(saveTimer); saveTimer=setTimeout(saveNow, 900); }
+function saveSoon(){ clearTimeout(saveTimer); saveTimer=setTimeout(function(){ saveNow(); cloudSoon(); }, 900); }
 
 function resetEditor(){
   pad.strokes=[]; pad.cur=null; pad.bbox=null; pad.activeCell=null;
@@ -1535,6 +1635,8 @@ function refreshNotesList(){
           return;
         }
         idbDel('notes', rec.id).then(function(){
+          if(fbUser && fbDb){ notesCol().doc(rec.id).delete().catch(function(){}); }
+          cloudDeleteNote(rec.id);
           if(rec.id===curNoteId){
             return idbAll('notes').then(function(rest){
               rest.sort(function(a,b){ return b.updated-a.updated; });
@@ -1676,10 +1778,12 @@ function importFile(f){
 }
 function renderImpPanel(){
   var p=pendingImport;
-  document.getElementById('impSummary').textContent=
-    '將新增 '+p.news.length+' 篇'+
-    (p.bad? '、'+p.bad+' 篇格式錯誤已略過':'')+
-    '。以下 '+p.conflicts.length+' 篇與現有筆記相同 ID，請逐篇選擇：';
+  var syncMode=!!p.sync;
+  document.getElementById('impSummary').textContent= syncMode
+    ? '以下 '+p.conflicts.length+' 篇筆記在本機和雲端都有修改，請逐篇選擇要保留哪個版本：'
+    : '將新增 '+p.news.length+' 篇'+
+      (p.bad? '、'+p.bad+' 篇格式錯誤已略過':'')+
+      '。以下 '+p.conflicts.length+' 篇與現有筆記相同 ID，請逐篇選擇：';
   var list=document.getElementById('impList');
   list.innerHTML='';
   p.conflicts.forEach(function(c){
@@ -1687,13 +1791,16 @@ function renderImpPanel(){
     var b=document.createElement('b');
     b.textContent=c.theirs.name||c.theirs.title||'（未命名）';
     var sm=document.createElement('small');
-    sm.textContent='現有：'+(c.mine.name||c.mine.title||'（未命名）')+'（更新 '+fmtDate(c.mine.updated)+'）\n'
-                  +'備份：'+(c.theirs.name||c.theirs.title||'（未命名）')+'（更新 '+fmtDate(c.theirs.updated)+'）';
+    var mineLbl = syncMode? '本機' : '現有';
+    var theirLbl = syncMode? '雲端' : '備份';
+    sm.textContent=mineLbl+'：'+(c.mine.name||c.mine.title||'（未命名）')+'（更新 '+fmtDate(c.mine.updated)+'）\n'
+                  +theirLbl+'：'+(c.theirs.name||c.theirs.title||'（未命名）')+'（更新 '+fmtDate(c.theirs.updated)+'）';
     sm.style.whiteSpace='pre-line';
     var ch=document.createElement('button');
     ch.className='btn';
     function paint(){
-      ch.textContent = c.restore ? '↩️ 還原成備份版本' : '🔒 保留現有版本';
+      if(syncMode) ch.textContent = c.restore ? '☁️ 改用雲端版本' : '📱 保留本機版本';
+      else ch.textContent = c.restore ? '↩️ 還原成備份版本' : '🔒 保留現有版本';
       ch.classList.toggle('primary', c.restore);
     }
     ch.addEventListener('click', function(){ c.restore=!c.restore; paint(); });
@@ -1713,6 +1820,37 @@ function applyImport(){
   var restored=p.conflicts.filter(function(c){ return c.restore; });
   var kept=p.conflicts.length-restored.length;
   var chain=Promise.resolve();
+
+  if(p.sync){
+    /* sync conflicts: restore=採用雲端 → pull; keep=保留本機 → push */
+    var pulledCur=false;
+    p.conflicts.forEach(function(c){
+      if(c.restore){
+        chain=chain.then(function(){ return idbPut('notes', c.theirs); })
+                   .then(function(){ return loadBases().then(function(){ bases[c.theirs.id]=c.theirs.updated; return saveBases(); }); });
+        if(c.theirs.id===curNoteId) pulledCur=true;
+      }else{
+        chain=chain.then(function(){ return pushNote(c.mine); });
+      }
+    });
+    chain.then(function(){
+      var fin=function(){
+        loading=false;
+        refreshNotesList();
+        nvMsg('同步完成：採用雲端 '+restored.length+' 篇、保留本機 '+kept+' 篇');
+        setCloudUI('on','☁️ 已同步 '+fmtDate(Date.now()));
+      };
+      if(pulledCur){
+        idbGet('notes', curNoteId).then(function(fresh){
+          loading=false;
+          if(fresh) loadNote(fresh);
+          fin();
+        }).catch(function(){ fin(); });
+      }else fin();
+    }).catch(function(){ loading=false; nvMsg('套用同步結果時發生錯誤'); });
+    return;
+  }
+
   p.news.forEach(function(rec){
     chain=chain.then(function(){ return idbPut('notes', rec); });
   });
@@ -1766,6 +1904,440 @@ impIn.addEventListener('change', function(){
   impIn.value='';
   if(f) importFile(f);
 });
+
+/* ---------- cloud sync (Firebase Auth + Firestore) ---------- */
+var FB_CONFIG={
+  apiKey: "AIzaSyBZFl413ZHEEAFt9B6rHolzq___ZldNZVo",
+  authDomain: "notebook-b7a06.firebaseapp.com",
+  projectId: "notebook-b7a06",
+  storageBucket: "notebook-b7a06.firebasestorage.app",
+  messagingSenderId: "730615054683",
+  appId: "1:730615054683:web:d3655e4f41e740da98da7e"
+};
+var fb={enabled:false, auth:null, fs:null, user:null};
+var cloudTimer=null, syncBusy=false, lastSyncAt=0;
+var cloudStatus=document.getElementById('cloudStatus');
+var tgCloud=document.getElementById('tgCloud');
+
+function cloudCol(){
+  return fb.fs.collection('tenants').doc(fb.user.uid).collection('notes');
+}
+function setCloudUI(state, msg){
+  tgCloud.classList.remove('cloudon','cloudsync');
+  if(state==='on'){ tgCloud.classList.add('cloudon'); tgCloud.textContent='☁️✓'; }
+  else if(state==='sync'){ tgCloud.classList.add('cloudsync'); tgCloud.textContent='⟳'; }
+  else{ tgCloud.textContent='☁️'; }
+  if(msg) cloudStatus.textContent=msg;
+  document.getElementById('cloudLogin').style.display = fb.user? 'none':'';
+  document.getElementById('cloudLogout').style.display = fb.user? '':'none';
+  document.getElementById('cloudSync').style.display = fb.user? '':'none';
+}
+function metaGetV(k){ return idbGet('meta',k).then(function(m){ return m? m.v : null; }).catch(function(){ return null; }); }
+function metaSetV(k,v){ return idbPut('meta',{k:k, v:v}).catch(function(){}); }
+
+/* base markers: last synced `updated` per note — for 3-way merge */
+var bases=null;
+function loadBases(){ return bases? Promise.resolve(bases) : metaGetV('bases').then(function(v){ bases=v||{}; return bases; }); }
+function saveBases(){ return metaSetV('bases', bases||{}); }
+
+function cloudPushSoon(rec){
+  if(!fb.user) return;
+  clearTimeout(cloudTimer);
+  cloudTimer=setTimeout(function(){ pushNote(rec); }, 1500);
+}
+function pushNote(rec){
+  if(!fb.user) return Promise.resolve();
+  if(JSON.stringify(rec).length > 950000){
+    nvMsg('「'+(rec.name||rec.title)+'」超過雲端單篇上限，僅保存在本機');
+    return Promise.resolve();
+  }
+  setCloudUI('sync');
+  return cloudCol().doc(rec.id).set(rec).then(function(){
+    return loadBases().then(function(){ bases[rec.id]=rec.updated; return saveBases(); });
+  }).then(function(){ setCloudUI('on','☁️ 已同步 '+fmtDate(Date.now())); })
+    .catch(function(){ setCloudUI('on','☁️ 推送失敗，稍後會再試'); });
+}
+function cloudDeleteNote(id){
+  loadBases().then(function(){ delete bases[id]; saveBases(); });
+  if(fb.user){
+    cloudCol().doc(id).delete().catch(function(){ addTombstone(id); });
+  }else{
+    addTombstone(id);
+  }
+}
+function addTombstone(id){
+  metaGetV('tombstones').then(function(v){
+    v=v||[];
+    if(v.indexOf(id)===-1) v.push(id);
+    metaSetV('tombstones', v);
+  });
+}
+
+function syncNow(){
+  if(!fb.user || syncBusy || !db) return;
+  syncBusy=true;
+  setCloudUI('sync','☁️ 同步中…');
+  saveNow().then(function(){
+    return Promise.all([idbAll('notes'), cloudCol().get(), metaGetV('tombstones'), loadBases()]);
+  }).then(function(rs){
+    var locals=rs[0], cloudSnap=rs[1], tomb=rs[2]||[];
+    var clouds={};
+    cloudSnap.forEach(function(d){ clouds[d.id]=d.data(); });
+    /* flush offline deletions first */
+    var chain=Promise.resolve();
+    tomb.forEach(function(id){
+      chain=chain.then(function(){ return cloudCol().doc(id).delete().catch(function(){}); });
+      delete clouds[id];
+    });
+    var lmap={};
+    locals.forEach(function(l){ lmap[l.id]=l; });
+    var conflicts=[], pulls=[], pushes=[];
+    Object.keys(clouds).forEach(function(id){
+      var c=clouds[id], l=lmap[id], b=bases[id]||0;
+      if(!l){ pulls.push(c); return; }                 /* cloud-only → pull */
+      if(c.updated===l.updated){ bases[id]=c.updated; return; }
+      var localChanged = l.updated>b, cloudChanged = c.updated>b;
+      if(localChanged && cloudChanged){ conflicts.push({mine:l, theirs:c, restore:false}); }
+      else if(cloudChanged){ pulls.push(c); }
+      else if(localChanged){ pushes.push(l); }
+      else if(c.updated>l.updated){ pulls.push(c); }   /* base lost → newer wins */
+      else{ pushes.push(l); }
+    });
+    var localOnly=locals.filter(function(l){ return !clouds[l.id] && tomb.indexOf(l.id)===-1; });
+    /* first cloud use: empty cloud + local notes → explicit consent, never auto-push */
+    if(!cloudSnap.size && localOnly.length && !Object.keys(bases).length){
+      chain.then(function(){ metaSetV('tombstones',[]); });
+      syncBusy=false;
+      setCloudUI('on','☁️ 雲端是空的，要上傳本機 '+localOnly.length+' 篇嗎？');
+      var up=document.getElementById('cloudUpload');
+      up.style.display='';
+      up.textContent='上傳本機 '+localOnly.length+' 篇';
+      return;
+    }
+    localOnly.forEach(function(l){ pushes.push(l); }); /* merge local-only notes up */
+    pulls.forEach(function(c){
+      chain=chain.then(function(){ return idbPut('notes', c); })
+                 .then(function(){ bases[c.id]=c.updated; });
+    });
+    pushes.forEach(function(l){
+      chain=chain.then(function(){ return pushNote(l); });
+    });
+    return chain.then(function(){ return metaSetV('tombstones',[]); })
+      .then(saveBases)
+      .then(function(){
+        var pulledCur = pulls.some(function(c){ return c.id===curNoteId; });
+        var fin=function(){
+          refreshNotesList();
+          lastSyncAt=Date.now();
+          syncBusy=false;
+          if(conflicts.length){
+            pendingImport={news:[], conflicts:conflicts, bad:0, sync:true};
+            renderImpPanel();
+            setCloudUI('on','☁️ 有 '+conflicts.length+' 篇兩邊都改過，請確認');
+          }else{
+            setCloudUI('on','☁️ 已同步 '+fmtDate(Date.now()));
+          }
+        };
+        if(pulledCur){
+          clearTimeout(saveTimer);
+          return idbGet('notes', curNoteId).then(function(fresh){
+            if(fresh) loadNote(fresh);
+            fin();
+          });
+        }
+        fin();
+      });
+  }).catch(function(){
+    syncBusy=false;
+    setCloudUI(fb.user?'on':'off','☁️ 同步失敗（離線？）稍後會再試');
+  });
+}
+
+/* auth wiring */
+var authPanel=document.getElementById('authPanel');
+if(window.firebase && FB_CONFIG.apiKey && FB_CONFIG.apiKey.indexOf('AIza')===0){
+  try{
+    firebase.initializeApp(FB_CONFIG);
+    fb.auth=firebase.auth();
+    fb.fs=firebase.firestore();
+    fb.enabled=true;
+    fb.auth.onAuthStateChanged(function(user){
+      fb.user=user;
+      if(!user){ setCloudUI('off','☁️ 未登入'); return; }
+      setCloudUI('sync','☁️ 已登入 '+(user.email||''));
+      /* tenant hygiene: switching accounts wipes local notes first */
+      metaGetV('lastUid').then(function(last){
+        var pre = Promise.resolve();
+        if(last && last!==user.uid){
+          pre = idbAll('notes').then(function(list){
+            var c=Promise.resolve();
+            list.forEach(function(r){ c=c.then(function(){ return idbDel('notes', r.id); }); });
+            return c;
+          }).then(function(){
+            bases={};
+            return Promise.all([saveBases(), metaSetV('tombstones',[])]);
+          }).then(function(){ newNote(); });
+        }
+        pre.then(function(){ return metaSetV('lastUid', user.uid); })
+           .then(function(){ syncNow(); });
+      });
+    });
+  }catch(e){ fb.enabled=false; setCloudUI('off','☁️ 雲端初始化失敗'); }
+}else{
+  setCloudUI('off','☁️ 未設定雲端');
+}
+tgCloud.addEventListener('click', function(){
+  setKb(false); saveNow(); clearTimeout(saveTimer);
+  refreshNotesList(); notesView.classList.add('show');
+  if(fb.enabled && !fb.user) authPanel.classList.add('show');
+});
+document.getElementById('cloudLogin').addEventListener('click', function(){
+  document.getElementById('authErr').textContent='';
+  authPanel.classList.add('show');
+});
+document.getElementById('authCancel').addEventListener('click', function(){
+  authPanel.classList.remove('show');
+});
+function authDo(register){
+  var em=document.getElementById('authEmail').value.trim();
+  var pw=document.getElementById('authPw').value;
+  var err=document.getElementById('authErr');
+  if(!em || pw.length<6){ err.textContent='請輸入 Email 和至少 6 碼密碼'; return; }
+  err.textContent='處理中…';
+  var p = register ? fb.auth.createUserWithEmailAndPassword(em,pw)
+                   : fb.auth.signInWithEmailAndPassword(em,pw);
+  p.then(function(){
+    err.textContent='';
+    authPanel.classList.remove('show');
+  }).catch(function(e2){
+    var m={'auth/invalid-credential':'帳號或密碼錯誤',
+           'auth/user-not-found':'帳號不存在，試試註冊',
+           'auth/wrong-password':'密碼錯誤',
+           'auth/email-already-in-use':'帳號已存在，請直接登入',
+           'auth/invalid-email':'Email 格式不正確',
+           'auth/weak-password':'密碼太簡單（至少 6 碼）',
+           'auth/unauthorized-domain':'此網域未加入 Firebase 授權清單'};
+    err.textContent=m[e2.code]||('登入失敗：'+e2.code);
+  });
+}
+document.getElementById('authGo').addEventListener('click', function(){ authDo(false); });
+document.getElementById('authReg').addEventListener('click', function(){ authDo(true); });
+document.getElementById('cloudLogout').addEventListener('click', function(){
+  if(fb.auth) fb.auth.signOut();
+  setCloudUI('off','☁️ 已登出（本機筆記保留）');
+});
+document.getElementById('cloudSync').addEventListener('click', syncNow);
+document.getElementById('cloudUpload').addEventListener('click', function(){
+  var up=document.getElementById('cloudUpload');
+  up.style.display='none';
+  idbAll('notes').then(function(list){
+    var c=Promise.resolve();
+    list.forEach(function(r){ c=c.then(function(){ return pushNote(r); }); });
+    c.then(function(){ setCloudUI('on','☁️ 已上傳 '+list.length+' 篇'); refreshNotesList(); });
+  });
+});
+/* resync when app returns to foreground or network comes back (throttled) */
+document.addEventListener('visibilitychange', function(){
+  if(!document.hidden && fb.user && Date.now()-lastSyncAt>30000) syncNow();
+});
+window.addEventListener('online', function(){ if(fb.user) syncNow(); });
+
+/* ---------- cloud sync (Firebase Auth + Firestore) ---------- */
+var FB_CONFIG={
+  apiKey: "AIzaSyBZFl413ZHEEAFt9B6rHolzq___ZldNZVo",
+  authDomain: "notebook-b7a06.firebaseapp.com",
+  projectId: "notebook-b7a06",
+  storageBucket: "notebook-b7a06.firebasestorage.app",
+  messagingSenderId: "730615054683",
+  appId: "1:730615054683:web:d3655e4f41e740da98da7e"
+};
+var fbAuth=null, fbDb=null, fbUser=null, syncing=false;
+var cloudView=document.getElementById('cloudView');
+var cvMsgEl=document.getElementById('cvMsg');
+var cvMsgTimer=null;
+function cvMsg(t){
+  cvMsgEl.textContent=t||'';
+  clearTimeout(cvMsgTimer);
+  if(t) cvMsgTimer=setTimeout(function(){ cvMsgEl.textContent=''; }, 6000);
+}
+function cvStatus(t){ document.getElementById('cvStatus').textContent=t; }
+
+try{
+  if(window.firebase && FB_CONFIG.apiKey.indexOf('YOUR_')!==0){
+    firebase.initializeApp(FB_CONFIG);
+    fbAuth=firebase.auth();
+    fbDb=firebase.firestore();
+    fbAuth.onAuthStateChanged(function(u){
+      fbUser=u;
+      document.body.classList.toggle('signedin', !!u);
+      document.getElementById('tgCloud').classList.toggle('cloud-on', !!u);
+      if(u){
+        document.getElementById('cvWho').textContent=u.email||'（帳號）';
+        guardAccountSwitch(u.uid).then(function(){ syncNow(true); });
+      }else{
+        cvStatus('—');
+      }
+    });
+  }
+}catch(e){ fbAuth=null; fbDb=null; }
+
+/* account switch guard: never let one account's local notes leak into another's cloud */
+function guardAccountSwitch(uid){
+  var prev=null;
+  try{ prev=localStorage.getItem('hwnote_uid'); }catch(e){}
+  if(prev && prev!==uid){
+    /* different account on this device → wipe local notes before syncing */
+    return idbAll('notes').then(function(list){
+      var chain=Promise.resolve();
+      list.forEach(function(r){ chain=chain.then(function(){ return idbDel('notes', r.id); }); });
+      return chain;
+    }).then(function(){
+      try{ localStorage.setItem('hwnote_uid', uid); }catch(e){}
+      items=[]; headStyle.ls=null; headStyle.done=false;
+      curNoteId=null; curNoteName=null;
+      cvMsg('偵測到換帳號，已清除本機筆記，改從雲端還原');
+      return null;
+    });
+  }
+  try{ localStorage.setItem('hwnote_uid', uid); }catch(e){}
+  return Promise.resolve();
+}
+
+function notesCol(){
+  return fbDb.collection('users').doc(fbUser.uid).collection('notes');
+}
+
+/* two-way sync: newer `updated` wins; both-changed cases go to the confirm panel */
+function syncNow(silent){
+  if(!fbUser || !fbDb || !db){ if(!silent) cvMsg('尚未登入或無本機儲存空間'); return Promise.resolve(); }
+  if(syncing) return Promise.resolve();
+  syncing=true;
+  cvStatus('同步中…');
+  return saveNow().then(function(){
+    clearTimeout(saveTimer);
+    return Promise.all([ idbAll('notes'), notesCol().get() ]);
+  }).then(function(res){
+    var locals=res[0], snap=res[1];
+    var remote={};
+    snap.forEach(function(d){ remote[d.id]=d.data(); });
+    var localMap={};
+    locals.forEach(function(r){ localMap[r.id]=r; });
+
+    var toPush=[], toPull=[], conflicts=[];
+    /* local → cloud */
+    locals.forEach(function(L){
+      var R=remote[L.id];
+      if(!R){ toPush.push(L); return; }
+      if((L.updated||0) > (R.updated||0)) toPush.push(L);
+      else if((R.updated||0) > (L.updated||0)) toPull.push(R);
+      /* equal timestamps → already in sync */
+    });
+    /* cloud-only → pull */
+    Object.keys(remote).forEach(function(id){
+      if(!localMap[id]) toPull.push(remote[id]);
+    });
+
+    var chain=Promise.resolve();
+    toPush.forEach(function(L){
+      chain=chain.then(function(){
+        return notesCol().doc(L.id).set(JSON.parse(JSON.stringify(L)));
+      });
+    });
+    var reloadCur=false;
+    toPull.forEach(function(R){
+      chain=chain.then(function(){ return idbPut('notes', R); });
+      if(R.id===curNoteId) reloadCur=true;
+    });
+    return chain.then(function(){
+      return {push:toPush.length, pull:toPull.length, reload:reloadCur};
+    });
+  }).then(function(r){
+    syncing=false;
+    var t=new Date();
+    cvStatus('上次同步 '+('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2)+
+             '（上傳 '+r.push+'、下載 '+r.pull+'）');
+    if(r.reload && curNoteId){
+      return idbGet('notes', curNoteId).then(function(fresh){
+        if(fresh) loadNote(fresh);
+      });
+    }
+    if(!curNoteId){
+      /* after an account switch there may be no open note */
+      return idbAll('notes').then(function(list){
+        list.sort(function(a,b){ return b.updated-a.updated; });
+        if(list.length) loadNote(list[0]); else newNote();
+      });
+    }
+  }).then(function(){
+    refreshNotesList();
+    if(!silent) cvMsg('同步完成');
+  }).catch(function(err){
+    syncing=false;
+    cvStatus('同步失敗');
+    cvMsg('同步失敗：'+((err&&err.message)||'未知錯誤'));
+  });
+}
+
+/* push after local edits (debounced, only when signed in) */
+var cloudTimer=null;
+function cloudSoon(){
+  if(!fbUser || !fbDb) return;
+  clearTimeout(cloudTimer);
+  cloudTimer=setTimeout(function(){ syncNow(true); }, 4000);
+}
+
+document.getElementById('tgCloud').addEventListener('click', function(){
+  setKb(false);
+  if(!fbAuth){ cvMsg('雲端功能未啟用'); }
+  cloudView.classList.add('show');
+});
+document.getElementById('cvClose').addEventListener('click', function(){
+  cloudView.classList.remove('show');
+});
+document.getElementById('cvLogin').addEventListener('click', function(){
+  var e=document.getElementById('cvEmail').value.trim();
+  var p=document.getElementById('cvPw').value;
+  if(!e||!p){ cvMsg('請輸入電子郵件和密碼'); return; }
+  cvMsg('登入中…');
+  fbAuth.signInWithEmailAndPassword(e,p).then(function(){
+    document.getElementById('cvPw').value='';
+    cvMsg('登入成功，開始同步');
+  }).catch(function(err){ cvMsg('登入失敗：'+authErr(err)); });
+});
+document.getElementById('cvSignup').addEventListener('click', function(){
+  var e=document.getElementById('cvEmail').value.trim();
+  var p=document.getElementById('cvPw').value;
+  if(!e||!p){ cvMsg('請輸入電子郵件和密碼'); return; }
+  cvMsg('註冊中…');
+  fbAuth.createUserWithEmailAndPassword(e,p).then(function(){
+    document.getElementById('cvPw').value='';
+    cvMsg('註冊成功，已自動登入');
+  }).catch(function(err){ cvMsg('註冊失敗：'+authErr(err)); });
+});
+document.getElementById('cvSyncNow').addEventListener('click', function(){ syncNow(false); });
+document.getElementById('cvLogout').addEventListener('click', function(){
+  var b=document.getElementById('cvLogout');
+  if(b.textContent==='登出'){
+    b.textContent='確定登出?';
+    setTimeout(function(){ b.textContent='登出'; }, 2500);
+    return;
+  }
+  b.textContent='登出';
+  syncNow(true).then(function(){
+    return fbAuth.signOut();
+  }).then(function(){ cvMsg('已登出（本機筆記保留）'); });
+});
+function authErr(err){
+  var c=(err&&err.code)||'';
+  if(c.indexOf('invalid-email')>-1) return '電子郵件格式不正確';
+  if(c.indexOf('weak-password')>-1) return '密碼至少要 6 位';
+  if(c.indexOf('email-already-in-use')>-1) return '這個信箱已註冊過，請直接登入';
+  if(c.indexOf('wrong-password')>-1 || c.indexOf('invalid-credential')>-1) return '帳號或密碼錯誤';
+  if(c.indexOf('user-not-found')>-1) return '查無此帳號，請先註冊';
+  if(c.indexOf('network')>-1) return '沒有網路連線';
+  if(c.indexOf('unauthorized-domain')>-1) return '此網域未授權（請到 Firebase 加入授權網域）';
+  return (err&&err.message)||'未知錯誤';
+}
 
 /* ---------- offline: register service worker ---------- */
 if('serviceWorker' in navigator){
