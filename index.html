@@ -297,7 +297,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v32 修刪除</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v33 體積診斷</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgSel">✂️</div>
@@ -2020,8 +2020,21 @@ function pushNote(rec){
   if(!fb.user) return Promise.resolve();
   var pk=deflateNote(rec);
   if(pk.doc.data.length > 950000){
-    /* 照片已外掛後仍超過（極端長的純手寫），才會走到這裡 */
-    nvMsg('「'+(rec.name||rec.title)+'」內容過大，暫僅保存在本機（建議分篇）');
+    /* 診斷：算出哪種元素佔了體積 */
+    var stat={img:0, imgN:0, doodle:0, doodleN:0, other:0, g:0, gN:0};
+    (rec.items||[]).forEach(function(it){
+      var sz=JSON.stringify(it).length;
+      if(it.t==='img'){ stat.img+=sz; stat.imgN++; }
+      else if(it.t==='doodle'){ stat.doodle+=sz; stat.doodleN++; }
+      else if(it.t==='g'){ stat.g+=sz; stat.gN++; }
+      else stat.other+=sz;
+    });
+    var kb=function(n){ return Math.round(n/1024)+'KB'; };
+    nvMsg('「'+(rec.name||rec.title)+'」過大('+kb(pk.doc.data.length)+
+          ')｜照片 '+stat.imgN+'張'+kb(stat.img)+
+          '、塗鴉 '+stat.doodleN+'個'+kb(stat.doodle)+
+          '、手寫 '+stat.gN+'字'+kb(stat.g)+
+          '、其他'+kb(stat.other)+'。已保存在本機');
     return Promise.resolve();
   }
   setCloudUI('sync');
