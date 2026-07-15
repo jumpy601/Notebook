@@ -297,7 +297,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v35 推送前瘦身</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v36 筆記分片</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgSel">✂️</div>
@@ -2026,6 +2026,7 @@ function blobCol(){
 }
 /* deflate: externalize photos into their own cloud docs; note body → JSON string
    (also sidesteps Firestore's nested-array ban on handwriting strokes) */
+var CHUNK=800000;   /* 每片 800KB，留安全餘裕 */
 function deflateNote(rec){
   var lite=JSON.parse(JSON.stringify(rec));
   var blobs=[];
@@ -2036,27 +2037,61 @@ function deflateNote(rec){
       it.src='@blob:'+bid;
     }
   });
-  return {
-    doc:{ id:rec.id, updated:rec.updated||0, title:rec.title||'',
-          name:rec.name||null, data:JSON.stringify(lite) },
-    blobs:blobs
-  };
+  var payload=JSON.stringify(lite);
+  var head={ id:rec.id, updated:rec.updated||0, title:rec.title||'',
+             name:rec.name||null };
+  if(payload.length <= CHUNK){
+    head.data=payload;
+    return {doc:head, blobs:blobs, chunks:[]};
+  }
+  /* 超過單片上限 → 切片存放，下載時拼回 */
+  var chunks=[];
+  for(var off=0, ci=0; off<payload.length; off+=CHUNK, ci++){
+    chunks.push({id:rec.id+'#'+ci, i:ci, data:payload.slice(off, off+CHUNK)});
+  }
+  head.chunked=chunks.length;
+  return {doc:head, blobs:blobs, chunks:chunks};
 }
-/* inflate: cloud wrapper doc → full local record (fetches referenced photos) */
+function chunkCol(){
+  return fb.fs.collection('tenants').doc(fb.user.uid).collection('chunks');
+}
+/* inflate: cloud wrapper doc → full local record (reassembles chunks, fetches photos) */
 function inflateNote(c){
-  if(!c || !c.data) return Promise.resolve(c||null);
-  var rec=null;
-  try{ rec=JSON.parse(c.data); }catch(e){ return Promise.resolve(null); }
-  var refs=[];
-  (rec.items||[]).forEach(function(it){
-    if(it.t==='img' && typeof it.src==='string' && it.src.indexOf('@blob:')===0) refs.push(it);
+  if(!c) return Promise.resolve(null);
+  var getPayload;
+  if(c.chunked){
+    var reads=[];
+    for(var ci=0; ci<c.chunked; ci++){
+      reads.push(chunkCol().doc(c.id+'#'+ci).get());
+    }
+    getPayload=Promise.all(reads).then(function(docs){
+      var parts=[];
+      for(var k=0;k<docs.length;k++){
+        if(!docs[k].exists) return null;   /* 缺片 → 資料不完整，放棄這次拉取 */
+        parts.push(docs[k].data().data);
+      }
+      return parts.join('');
+    });
+  }else if(c.data){
+    getPayload=Promise.resolve(c.data);
+  }else{
+    return Promise.resolve(c);   /* 舊格式原樣通過 */
+  }
+  return getPayload.then(function(payload){
+    if(!payload) return null;
+    var rec=null;
+    try{ rec=JSON.parse(payload); }catch(e){ return null; }
+    var refs=[];
+    (rec.items||[]).forEach(function(it){
+      if(it.t==='img' && typeof it.src==='string' && it.src.indexOf('@blob:')===0) refs.push(it);
+    });
+    if(!refs.length) return rec;
+    return Promise.all(refs.map(function(it){
+      return blobCol().doc(it.src.slice(6)).get().then(function(d){
+        it.src=(d.exists && d.data().data) || '';
+      }).catch(function(){ it.src=''; });
+    })).then(function(){ return rec; });
   });
-  if(!refs.length) return Promise.resolve(rec);
-  return Promise.all(refs.map(function(it){
-    return blobCol().doc(it.src.slice(6)).get().then(function(d){
-      it.src=(d.exists && d.data().data) || '';
-    }).catch(function(){ it.src=''; });
-  })).then(function(){ return rec; });
 }
 function pushNote(rec){
   if(!fb.user) return Promise.resolve();
@@ -2065,22 +2100,9 @@ function pushNote(rec){
     idbPut('notes', rec).catch(function(){});   /* persist slimmed copy locally too */
   }
   var pk=deflateNote(rec);
-  if(pk.doc.data.length > 950000){
-    /* 診斷：算出哪種元素佔了體積 */
-    var stat={img:0, imgN:0, doodle:0, doodleN:0, other:0, g:0, gN:0};
-    (rec.items||[]).forEach(function(it){
-      var sz=JSON.stringify(it).length;
-      if(it.t==='img'){ stat.img+=sz; stat.imgN++; }
-      else if(it.t==='doodle'){ stat.doodle+=sz; stat.doodleN++; }
-      else if(it.t==='g'){ stat.g+=sz; stat.gN++; }
-      else stat.other+=sz;
-    });
-    var kb=function(n){ return Math.round(n/1024)+'KB'; };
-    nvMsg('「'+(rec.name||rec.title)+'」過大('+kb(pk.doc.data.length)+
-          ')｜照片 '+stat.imgN+'張'+kb(stat.img)+
-          '、塗鴉 '+stat.doodleN+'個'+kb(stat.doodle)+
-          '、手寫 '+stat.gN+'字'+kb(stat.g)+
-          '、其他'+kb(stat.other)+'。已保存在本機');
+  var total=pk.chunks.length ? pk.chunks.length*CHUNK : (pk.doc.data||'').length;
+  if(pk.chunks.length > 10){   /* ~8MB：理智上限，正常使用碰不到 */
+    nvMsg('「'+(rec.name||rec.title)+'」大得不尋常（約'+Math.round(total/1048576)+'MB），已保存在本機，建議分篇');
     return Promise.resolve();
   }
   setCloudUI('sync');
@@ -2090,8 +2112,23 @@ function pushNote(rec){
       return blobCol().doc(b.id).set({note:rec.id, data:b.data});
     });
   });
+  pk.chunks.forEach(function(ch){
+    chain=chain.then(function(){
+      return chunkCol().doc(ch.id).set({note:rec.id, i:ch.i, data:ch.data});
+    });
+  });
   return chain.then(function(){
     return cloudCol().doc(rec.id).set(pk.doc);
+  }).then(function(){
+    /* 筆記變短時清掉多餘的舊分片 */
+    return chunkCol().where('note','==',rec.id).get().then(function(snap){
+      var dels=[];
+      snap.forEach(function(d){
+        var ci=d.data().i;
+        if(ci===undefined || ci >= pk.chunks.length) dels.push(d.ref.delete().catch(function(){}));
+      });
+      return Promise.all(dels);
+    }).catch(function(){});
   }).then(function(){
     return loadBases().then(function(){ bases[rec.id]=rec.updated; return saveBases(); });
   }).then(function(){ setCloudUI('on','☁️ 已同步 '+fmtDate(Date.now())); })
@@ -2102,6 +2139,9 @@ function cloudDeleteNote(id){
   if(fb.user){
     cloudCol().doc(id).delete().catch(function(){ addTombstone(id); });
     blobCol().where('note','==',id).get().then(function(snap){
+      snap.forEach(function(d){ d.ref.delete().catch(function(){}); });
+    }).catch(function(){});
+    chunkCol().where('note','==',id).get().then(function(snap){
       snap.forEach(function(d){ d.ref.delete().catch(function(){}); });
     }).catch(function(){});
   }else{
