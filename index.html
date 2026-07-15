@@ -297,7 +297,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v29 縮排橫向</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v30 修同步格式</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgSel">✂️</div>
@@ -2269,24 +2269,38 @@ function syncNow(silent){
     });
 
     var chain=Promise.resolve();
+    var tooBig=0;
     toPush.forEach(function(L){
+      /* Firestore 禁止巢狀陣列（手寫筆畫就是），整篇序列化成字串存 */
+      var payload=JSON.stringify(L);
+      if(payload.length > 950000){ tooBig++; return; }   /* 單篇文件 1MB 上限 */
       chain=chain.then(function(){
-        return notesCol().doc(L.id).set(JSON.parse(JSON.stringify(L)));
+        return notesCol().doc(L.id).set({
+          id: L.id,
+          updated: L.updated||0,
+          title: L.title||'',
+          name: L.name||null,
+          data: payload
+        });
       });
     });
     var reloadCur=false;
     toPull.forEach(function(R){
-      chain=chain.then(function(){ return idbPut('notes', R); });
-      if(R.id===curNoteId) reloadCur=true;
+      var rec=null;
+      try{ rec=JSON.parse(R.data); }catch(e){}
+      if(!rec || !rec.id) return;                        /* 壞文件直接略過 */
+      chain=chain.then(function(){ return idbPut('notes', rec); });
+      if(rec.id===curNoteId) reloadCur=true;
     });
     return chain.then(function(){
-      return {push:toPush.length, pull:toPull.length, reload:reloadCur};
+      return {push:toPush.length-tooBig, pull:toPull.length, reload:reloadCur, big:tooBig};
     });
   }).then(function(r){
     syncing=false;
     var t=new Date();
     cvStatus('上次同步 '+('0'+t.getHours()).slice(-2)+':'+('0'+t.getMinutes()).slice(-2)+
-             '（上傳 '+r.push+'、下載 '+r.pull+'）');
+             '（上傳 '+r.push+'、下載 '+r.pull+'）'+
+             (r.big? '⚠️ '+r.big+' 篇超過雲端單篇上限未上傳（照片過多，請分篇）':''));
     if(r.reload && curNoteId){
       return idbGet('notes', curNoteId).then(function(fresh){
         if(fresh) loadNote(fresh);
