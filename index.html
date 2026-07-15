@@ -297,7 +297,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v33 體積診斷</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v34 筆跡瘦身</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgSel">✂️</div>
@@ -509,6 +509,45 @@ var blockSize = document.getElementById('blockSize');
 var DPR = Math.max(1, window.devicePixelRatio || 1);
 
 function clamp(v,a,b){ return v<a?a:(v>b?b:v); }
+function r3(n){ return Math.round(n*1000)/1000; }   /* 3 dp: sub-pixel, plenty */
+function r2(n){ return Math.round(n*100)/100; }
+/* thin dense stroke points: keep first, last, and points >minD from the last kept one */
+function thinPts(pts, minD){
+  if(pts.length<=2) return pts;
+  var out=[pts[0]], last=pts[0];
+  for(var i=1;i<pts.length-1;i++){
+    var p=pts[i];
+    var dx=p.x-last.x, dy=p.y-last.y;
+    if(dx*dx+dy*dy >= minD*minD){ out.push(p); last=p; }
+  }
+  out.push(pts[pts.length-1]);
+  return out;
+}
+/* shrink already-saved notes whose stroke points were stored at full float precision */
+function compactRec(rec){
+  var changed=false;
+  (rec.items||[]).forEach(function(it){
+    if(it.t==='g' && it.s){
+      for(var si=0; si<it.s.length; si++){
+        it.s[si].forEach(function(p){ p.x=r3(p.x); p.y=r3(p.y); p.p=r2(p.p); });
+        var t=thinPts(it.s[si], 0.03);
+        if(t.length!==it.s[si].length){ it.s[si]=t; }
+        changed=true;
+      }
+    }else if(it.t==='doodle' && it.s){
+      it.s.forEach(function(st){
+        var arr=Array.isArray(st);
+        var pts=arr?st:st.p;
+        if(!pts) return;
+        pts.forEach(function(p){ p.x=r3(p.x); p.y=r3(p.y); p.p=r2(p.p); });
+        var t=thinPts(pts, 0.012);
+        if(t.length!==pts.length){ if(arr){ it.s[it.s.indexOf(st)]=t; } else { st.p=t; } }
+        changed=true;
+      });
+    }
+  });
+  return changed;
+}
 function pressureOf(e){
   if(e.pointerType==='pen' && e.pressure>0) return e.pressure;
   return 0.5;
@@ -1158,13 +1197,14 @@ function commitGlyph(){
     });
   });
   var s = pad.strokes.map(function(st){
-    return st.pts.map(function(p){
+    var norm=st.pts.map(function(p){
       return {
-        x:(p.x-minX)/pad.cellSize + 0.05,
-        y:(p.y-pad.cellTop)/pad.cellSize,
-        p:p.p
+        x:r3((p.x-minX)/pad.cellSize + 0.05),
+        y:r3((p.y-pad.cellTop)/pad.cellSize),
+        p:r2(p.p)
       };
     });
+    return thinPts(norm, 0.03);   /* drop points <2% of cell apart */
   });
   var adv = clamp((maxX-minX)/pad.cellSize + 0.16, 0.42, 1.12);
   insertItem({t:'g', s:s, adv:adv});
@@ -1184,11 +1224,11 @@ function commitDoodle(){
   var bw=Math.max(1,maxX-minX), bh=Math.max(1,maxY-minY);
   var s = pad.strokes.map(function(st){
     return {
-      p: st.pts.map(function(pp){
-        return {x:(pp.x-minX)/bw, y:(pp.y-minY)/bh, p:pp.p};
-      }),
+      p: thinPts(st.pts.map(function(pp){
+        return {x:r3((pp.x-minX)/bw), y:r3((pp.y-minY)/bh), p:r2(pp.p)};
+      }), 0.012),
       c: st.c||INK,
-      wr: (st.w||doodleW)/bw     /* width relative to bbox: scales with the block */
+      wr: r3((st.w||doodleW)/bw)     /* width relative to bbox: scales with the block */
     };
   });
   insertItem({
@@ -1563,6 +1603,7 @@ function resetEditor(){
 function loadNote(rec){
   clearTimeout(saveTimer);   /* kill pending autosave: it holds PRE-load content */
   loading=true;
+  var didCompact=compactRec(rec);   /* one-time migration: round legacy full-precision points */
   curNoteId=rec.id;
   curNoteName=rec.name||null;
   headStyle.ls=(rec.head&&rec.head.ls)||null;
@@ -1587,6 +1628,7 @@ function loadNote(rec){
   renderNote(); renderPad();
   noteWrap.scrollTop=0;
   if(db) idbPut('meta',{k:'lastId', v:curNoteId}).catch(function(){});
+  if(didCompact){ saveNow(); }   /* write back the slimmed strokes (also re-pushes to cloud) */
 }
 function newNote(){
   saveNow();
