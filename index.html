@@ -297,7 +297,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v31 照片外掛</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v32 修刪除</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgSel">✂️</div>
@@ -1666,7 +1666,6 @@ function refreshNotesList(){
           return;
         }
         idbDel('notes', rec.id).then(function(){
-          if(fbUser && fbDb){ notesCol().doc(rec.id).delete().catch(function(){}); }
           cloudDeleteNote(rec.id);
           if(rec.id===curNoteId){
             return idbAll('notes').then(function(rest){
@@ -2037,7 +2036,7 @@ function pushNote(rec){
   }).then(function(){
     return loadBases().then(function(){ bases[rec.id]=rec.updated; return saveBases(); });
   }).then(function(){ setCloudUI('on','☁️ 已同步 '+fmtDate(Date.now())); })
-    .catch(function(){ setCloudUI('on','☁️ 推送失敗，稍後會再試'); });
+    .catch(function(err){ setCloudUI('on','☁️ 推送失敗：'+((err&&(err.code||err.message))||'未知')); });
 }
 function cloudDeleteNote(id){
   loadBases().then(function(){ delete bases[id]; saveBases(); });
@@ -2135,9 +2134,10 @@ function syncNow(){
         }
         fin();
       });
-  }).catch(function(){
+  }).catch(function(err){
     syncBusy=false;
-    setCloudUI(fb.user?'on':'off','☁️ 同步失敗（離線？）稍後會再試');
+    var code=(err&&(err.code||err.message))||'未知錯誤';
+    setCloudUI(fb.user?'on':'off','☁️ 同步失敗：'+code);
   });
 }
 
