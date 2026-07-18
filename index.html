@@ -199,6 +199,31 @@ body.kb #blockRow, body.kb #styleRow, body.kb #selRow, body.kb #toolbar{order:-1
 .pill.cloudon{background:var(--mint-soft); color:#3E8A6C; border-color:var(--mint);}
 .pill.cloudsync{background:#FFF3D6; color:#B07D2B; border-color:#F2DCA0;}
 
+#annView{
+  position:fixed; inset:0; z-index:70;
+  background:#EDE9E0;
+  display:none; flex-direction:column;
+  padding-top:env(safe-area-inset-top);
+}
+#annView.show{display:flex;}
+#annTools{background:var(--paper); border-bottom:1.5px solid var(--accent-soft); padding:6px 10px;}
+.atLine{display:flex; align-items:center; gap:6px; margin-bottom:5px;}
+.atLine:last-child{margin-bottom:0;}
+.atLine .btn{flex:1 1 0; padding:7px 4px; font-size:12px;}
+.atLine .btn.on{background:var(--accent-soft); color:#C4527A; font-weight:800;}
+.atLine .dot{
+  width:30px; height:30px; border-radius:999px; border:2.5px solid transparent;
+  flex:0 0 auto; touch-action:manipulation; padding:0;
+}
+.atLine .dot.on{border-color:var(--ink);}
+#annWrap{flex:1; min-height:0; overflow:hidden; position:relative;}
+#annCanvas{display:block; width:100%; height:100%; touch-action:none;}
+#annHint{
+  position:absolute; bottom:calc(10px + env(safe-area-inset-bottom)); left:0; right:0;
+  text-align:center; font-size:11px; color:var(--muted); pointer-events:none;
+  position:fixed;
+}
+
 #cloudView{
   position:fixed; inset:0; z-index:55;
   background:var(--paper);
@@ -297,7 +322,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v36 筆記分片</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v38 螢光橡皮</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgSel">✂️</div>
@@ -344,6 +369,41 @@ body.doodling #padWrap{flex-basis:56vh;}
   </div>
 </div>
 <input type="file" id="impIn" accept=".json,application/json" style="display:none">
+
+<div id="annView">
+  <div class="nvHead">
+    <b>✏️ 註記</b>
+    <div class="spacer"></div>
+    <button class="btn" id="annUndo">復原</button>
+    <button class="btn" id="annCancel">取消</button>
+    <button class="btn primary" id="annDone">完成</button>
+  </div>
+  <div id="annTools">
+    <div class="atLine">
+      <button class="btn at on" id="atPen">🖊 筆</button>
+      <button class="btn at" id="atHl">🖍 螢光</button>
+      <button class="btn at" id="atErase">🧽 橡皮</button>
+      <button class="btn at" id="atMove">✋ 移動</button>
+    </div>
+    <div class="atLine" id="atPenOpts">
+      <button class="btn aw" data-w="0.006">細</button>
+      <button class="btn aw on" data-w="0.011">中</button>
+      <button class="btn aw" data-w="0.02">粗</button>
+      <button class="dot on" data-c="" style="background:#4A4458"></button>
+      <button class="dot" data-c="#D9534F" style="background:#D9534F"></button>
+      <button class="dot" data-c="#3E8A6C" style="background:#3E8A6C"></button>
+      <button class="dot" data-c="#5B7FD4" style="background:#5B7FD4"></button>
+      <button class="dot" data-c="#E88FA5" style="background:#E88FA5"></button>
+    </div>
+    <div class="atLine" id="atHlOpts" style="display:none;">
+      <button class="dot hlc on" data-c="#F4D03F" style="background:#F4D03F"></button>
+      <button class="dot hlc" data-c="#F1948A" style="background:#F1948A"></button>
+      <button class="dot hlc" data-c="#7DCEA0" style="background:#7DCEA0"></button>
+    </div>
+  </div>
+  <div id="annWrap"><canvas id="annCanvas"></canvas></div>
+  <div id="annHint">單指畫記・雙指縮放移動</div>
+</div>
 
 <div id="cloudView">
   <div class="nvHead">
@@ -400,6 +460,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <div id="blockRow">
   <span>圖塊大小</span>
   <input type="range" id="blockSize" min="20" max="100" value="60">
+  <button class="btn" id="blockAnn">✏️ 註記</button>
   <button class="btn warn" id="blockDel">刪除</button>
   <button class="btn" id="blockDone">完成</button>
 </div>
@@ -486,6 +547,7 @@ var autoCommit = true;
 var penOnly = false;
 var doodleMode = false;
 var selItem = null;          /* selected img/doodle block (object ref) */
+var lastBlockTap={it:null, t:0};
 var blockRects = [];         /* hit-test rects from last note render */
 var IDLE_MS = 1300;
 var INK = '#4A4458';
@@ -527,6 +589,15 @@ function thinPts(pts, minD){
 function compactRec(rec){
   var changed=false;
   (rec.items||[]).forEach(function(it){
+    if(it.t==='img' && it.ann){
+      it.ann.forEach(function(st){
+        if(!st.p) return;
+        st.p.forEach(function(p){ p.x=r3(p.x); p.y=r3(p.y); p.p=r2(p.p); });
+        var t=thinPts(st.p, 0.004);
+        if(t.length!==st.p.length){ st.p=t; }
+        changed=true;
+      });
+    }
     if(it.t==='g' && it.s){
       for(var si=0; si<it.s.length; si++){
         it.s[si].forEach(function(p){ p.x=r3(p.x); p.y=r3(p.y); p.p=r2(p.p); });
@@ -581,6 +652,32 @@ function drawStroke(ctx, pts, map, wBase, color){
   ctx.moveTo(prevMid.x,prevMid.y);
   ctx.lineTo(prev.x,prev.y);
   ctx.lineWidth=Math.max(0.9, wBase*(0.7+0.6*pts[pts.length-1].p));
+  ctx.stroke();
+}
+
+/* single-path constant-width stroke: overlaps within one stroke paint only once
+   (used by the highlighter so round caps don't stack into dark blobs) */
+function drawStrokeFlat(ctx, pts, map, width, color){
+  if(!pts.length) return;
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.strokeStyle=color||INK;
+  ctx.lineWidth=width;
+  ctx.beginPath();
+  var prev=map(pts[0]);
+  if(pts.length===1){
+    ctx.moveTo(prev.x, prev.y);
+    ctx.lineTo(prev.x+0.01, prev.y);
+    ctx.stroke();
+    return;
+  }
+  ctx.moveTo(prev.x, prev.y);
+  for(var i=1;i<pts.length;i++){
+    var p=map(pts[i]);
+    var mid={x:(prev.x+p.x)/2, y:(prev.y+p.y)/2};
+    ctx.quadraticCurveTo(prev.x, prev.y, mid.x, mid.y);
+    prev=p;
+  }
+  ctx.lineTo(prev.x, prev.y);
   ctx.stroke();
 }
 
@@ -859,6 +956,26 @@ function renderNote(){
     }else if(itm.t==='img'){
       if(itm._img && itm._img.complete){
         nctx.drawImage(itm._img, q.x, q.y, q.w, q.h);
+        if(itm.ann && itm.ann.length){
+          (function(bx,by,bw,bh){
+            for(var ai=0; ai<itm.ann.length; ai++){
+              var ast=itm.ann[ai];
+              if(!ast.p) continue;
+              if(ast.hl){
+                nctx.globalAlpha=0.38;
+                drawStrokeFlat(nctx, ast.p, function(p){
+                  return {x:bx + p.x*bw, y:by + p.y*bh};
+                }, Math.max(0.8, (ast.wr||0.028)*bw), ast.c||INK);
+                nctx.globalAlpha=1;
+                continue;
+              }
+              drawStroke(nctx, ast.p, function(p){
+                return {x:bx + p.x*bw, y:by + p.y*bh};
+              }, Math.max(0.8, (ast.wr||0.01)*bw), ast.c||INK);
+              nctx.globalAlpha=1;
+            }
+          })(q.x, q.y, q.w, q.h);
+        }
       }else{
         nctx.fillStyle='#F3EDE2';
         nctx.fillRect(q.x,q.y,q.w,q.h);
@@ -1034,6 +1151,284 @@ document.getElementById('selPaste').addEventListener('click', function(){
 });
 document.getElementById('selDone').addEventListener('click', exitSel);
 
+/* ---------- annotation editor (photos & future PDF pages) ---------- */
+var annView=document.getElementById('annView');
+var annCv=document.getElementById('annCanvas');
+var actx=annCv.getContext('2d');
+var ann={
+  item:null,          /* the img item being annotated */
+  strokes:[],         /* working copy */
+  backup:null,        /* for cancel */
+  ops:[],             /* undo stack */
+  tool:'pen',         /* pen|hl|erase|move */
+  penW:0.011, penC:null,
+  hlC:'#F4D03F',
+  scale:1, tx:0, ty:0,
+  baseW:0, baseH:0,   /* fitted image size at scale 1 */
+  cur:null,
+  ptrs:{},            /* active pointers */
+  pinch:null
+};
+function annOpen(item){
+  if(!item || item.t!=='img' || !item._img || !item._img.complete){
+    nvMsg('照片還在載入中，稍等一下再試'); return;
+  }
+  ann.item=item;
+  ann.strokes=JSON.parse(JSON.stringify(item.ann||[]));
+  ann.backup=JSON.parse(JSON.stringify(item.ann||[]));
+  ann.ops=[]; ann.cur=null; ann.ptrs={}; ann.pinch=null;
+  ann.scale=1; ann.tx=0; ann.ty=0;
+  annView.classList.add('show');
+  annSize(); annRender();
+}
+function annClose(save){
+  if(save){
+    ann.item.ann = ann.strokes.length ? ann.strokes : undefined;
+    renderNote();               /* triggers autosave + cloud push */
+  }
+  ann.item=null;
+  annView.classList.remove('show');
+}
+function annSize(){
+  var w=annCv.clientWidth, h=annCv.clientHeight;
+  annCv.width=Math.round(w*DPR); annCv.height=Math.round(h*DPR);
+  /* fit image to width at scale 1 */
+  ann.baseW=w;
+  ann.baseH=w*ann.item.ar;
+  /* start centered vertically if image shorter than viewport */
+  if(ann.baseH<h && ann.ty===0) ann.ty=(h-ann.baseH)/2;
+}
+function annClampView(){
+  var w=annCv.clientWidth, h=annCv.clientHeight;
+  ann.scale=clamp(ann.scale, 1, 8);
+  var cw=ann.baseW*ann.scale, chh=ann.baseH*ann.scale;
+  ann.tx = (cw<=w) ? (w-cw)/2 : clamp(ann.tx, w-cw, 0);
+  ann.ty = (chh<=h) ? (h-chh)/2 : clamp(ann.ty, h-chh, 0);
+}
+var annRaf=0;
+function annRender(){
+  if(annRaf) return;
+  annRaf=requestAnimationFrame(function(){
+    annRaf=0;
+    var w=annCv.clientWidth, h=annCv.clientHeight;
+    actx.setTransform(DPR,0,0,DPR,0,0);
+    actx.fillStyle='#EDE9E0';
+    actx.fillRect(0,0,w,h);
+    actx.setTransform(DPR*ann.scale,0,0,DPR*ann.scale,DPR*ann.tx,DPR*ann.ty);
+    actx.drawImage(ann.item._img, 0, 0, ann.baseW, ann.baseH);
+    var all=ann.strokes.slice();
+    if(ann.cur) all.push(ann.cur);
+    for(var i=0;i<all.length;i++){
+      var st=all[i];
+      if(!st.p || !st.p.length) continue;
+      if(st.hl){
+        actx.globalAlpha=0.38;
+        drawStrokeFlat(actx, st.p, function(p){
+          return {x:p.x*ann.baseW, y:p.y*ann.baseH};
+        }, (st.wr||0.028)*ann.baseW, st.c||INK);
+        actx.globalAlpha=1;
+        continue;
+      }
+      drawStroke(actx, st.p, function(p){
+        return {x:p.x*ann.baseW, y:p.y*ann.baseH};
+      }, Math.max(0.6/ann.scale, (st.wr||0.01)*ann.baseW), st.c||INK);
+      actx.globalAlpha=1;
+    }
+  });
+}
+function annPos(e){
+  var r=annCv.getBoundingClientRect();
+  var sx=e.clientX-r.left, sy=e.clientY-r.top;
+  return {
+    x:(sx-ann.tx)/ann.scale/ann.baseW,
+    y:(sy-ann.ty)/ann.scale/ann.baseH,
+    sx:sx, sy:sy
+  };
+}
+/* pixel-style eraser: erase a circular area; strokes split around the gap */
+function annResample(pts, maxD, yr){
+  if(pts.length<2) return pts.slice();
+  var out=[pts[0]];
+  for(var i=1;i<pts.length;i++){
+    var a=pts[i-1], b=pts[i];
+    var dx=b.x-a.x, dy=(b.y-a.y)/yr;
+    var d=Math.sqrt(dx*dx+dy*dy);
+    var n=Math.floor(d/maxD);
+    for(var k=1;k<=n;k++){
+      var t=k/(n+1);
+      out.push({x:a.x+(b.x-a.x)*t, y:a.y+(b.y-a.y)*t, p:b.p});
+    }
+    out.push(b);
+  }
+  return out;
+}
+function annEraseAt(q){
+  var R=16/(ann.scale*ann.baseW);          /* 螢幕上約 16px 的橡皮擦 */
+  var yr=ann.baseW/ann.baseH;
+  var out=[], any=false;
+  for(var i=0;i<ann.strokes.length;i++){
+    var st=ann.strokes[i];
+    var pts=annResample(st.p, R*0.6, yr);
+    var hitAny=false, runs=[], run=[];
+    for(var k=0;k<pts.length;k++){
+      var dx=pts[k].x-q.x, dy=(pts[k].y-q.y)/yr;
+      if(dx*dx+dy*dy < R*R){
+        hitAny=true;
+        if(run.length){ runs.push(run); run=[]; }
+      }else{
+        run.push(pts[k]);
+      }
+    }
+    if(run.length) runs.push(run);
+    if(!hitAny){ out.push(st); continue; }
+    any=true;
+    for(var r2i=0;r2i<runs.length;r2i++){
+      if(runs[r2i].length<2) continue;      /* 剩一個孤點就不留 */
+      var np=runs[r2i].map(function(p){ return {x:r3(p.x), y:r3(p.y), p:r2(p.p)}; });
+      out.push({p:thinPts(np, 0.003), c:st.c, wr:st.wr, hl:st.hl});
+    }
+  }
+  if(any){ ann.strokes=out; annRender(); }
+}
+annCv.addEventListener('pointerdown', function(e){
+  e.preventDefault();
+  ann.ptrs[e.pointerId]=e;
+  try{ annCv.setPointerCapture(e.pointerId); }catch(err){}
+  var ids=Object.keys(ann.ptrs);
+  if(ids.length===2){
+    /* second finger: abort any stroke, start pinch */
+    if(ann.cur){ ann.cur=null; }
+    var a=ann.ptrs[ids[0]], b=ann.ptrs[ids[1]];
+    ann.pinch={
+      d:Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY),
+      mx:(a.clientX+b.clientX)/2, my:(a.clientY+b.clientY)/2,
+      scale:ann.scale, tx:ann.tx, ty:ann.ty
+    };
+    annRender();
+    return;
+  }
+  if(ids.length>2) return;
+  var q=annPos(e);
+  var penInput=(e.pointerType==='pen');
+  if(ann.tool==='move' && !penInput){ ann.pan={sx:q.sx, sy:q.sy, tx:ann.tx, ty:ann.ty}; return; }
+  if(ann.tool==='erase'){ annPushUndo(); annEraseAt(q); ann.erasing=true; return; }
+  if(q.x<-0.02||q.x>1.02||q.y<-0.02||q.y>1.02) return;   /* outside the page */
+  var hl=(ann.tool==='hl');
+  ann.cur={
+    p:[{x:r3(q.x), y:r3(q.y), p:r2(pressureOf(e))}],
+    c: hl ? ann.hlC : (ann.penC||INK),
+    wr: hl ? 0.028 : ann.penW,
+    hl: hl||undefined
+  };
+  annRender();
+});
+annCv.addEventListener('pointermove', function(e){
+  if(!ann.ptrs[e.pointerId]) return;
+  e.preventDefault();
+  ann.ptrs[e.pointerId]=e;
+  var ids=Object.keys(ann.ptrs);
+  if(ids.length===2 && ann.pinch){
+    var a=ann.ptrs[ids[0]], b=ann.ptrs[ids[1]];
+    var d=Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+    var mx=(a.clientX+b.clientX)/2, my=(a.clientY+b.clientY)/2;
+    var k=d/ann.pinch.d;
+    ann.scale=ann.pinch.scale*k;
+    /* zoom around the pinch midpoint, follow midpoint drag */
+    var r=annCv.getBoundingClientRect();
+    var px=ann.pinch.mx-r.left, py=ann.pinch.my-r.top;
+    ann.tx = (ann.pinch.tx - px)*k + px + (mx-ann.pinch.mx);
+    ann.ty = (ann.pinch.ty - py)*k + py + (my-ann.pinch.my);
+    annClampView(); annRender();
+    return;
+  }
+  if(ann.pan){
+    var q0=annPos(e);
+    ann.tx=ann.pan.tx + (q0.sx-ann.pan.sx);
+    ann.ty=ann.pan.ty + (q0.sy-ann.pan.sy);
+    annClampView(); annRender();
+    return;
+  }
+  if(ann.erasing){ annEraseAt(annPos(e)); return; }
+  if(!ann.cur) return;
+  var evs=e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  for(var i=0;i<evs.length;i++){
+    var q=annPos(evs[i]);
+    ann.cur.p.push({x:r3(q.x), y:r3(q.y), p:r2(pressureOf(evs[i]))});
+  }
+  annRender();
+});
+function annPushUndo(){
+  ann.ops.push(JSON.parse(JSON.stringify(ann.strokes)));
+  if(ann.ops.length>30) ann.ops.shift();
+}
+function annUp(e){
+  delete ann.ptrs[e.pointerId];
+  if(Object.keys(ann.ptrs).length<2) ann.pinch=null;
+  ann.pan=null; ann.erasing=false;
+  if(ann.cur){
+    annPushUndo();               /* snapshot pre-stroke state */
+    ann.cur.p=thinPts(ann.cur.p, 0.004);
+    ann.strokes.push(ann.cur);
+    ann.cur=null;
+    annRender();
+  }
+}
+annCv.addEventListener('pointerup', function(e){ e.preventDefault(); annUp(e); });
+annCv.addEventListener('pointercancel', function(e){ ann.cur=null; annUp(e); });
+['touchstart','touchmove','touchend'].forEach(function(ev){
+  annCv.addEventListener(ev, function(e){ e.preventDefault(); }, {passive:false});
+});
+document.getElementById('annUndo').addEventListener('click', function(){
+  if(!ann.ops.length) return;
+  ann.strokes=ann.ops.pop();
+  annRender();
+});
+document.getElementById('annCancel').addEventListener('click', function(){
+  ann.strokes=ann.backup;   /* discard changes */
+  annClose(false);
+});
+document.getElementById('annDone').addEventListener('click', function(){ annClose(true); });
+/* tool switching */
+function annSetTool(t){
+  ann.tool=t;
+  ['atPen','atHl','atErase','atMove'].forEach(function(id){
+    document.getElementById(id).classList.toggle('on',
+      (id==='atPen'&&t==='pen')||(id==='atHl'&&t==='hl')||
+      (id==='atErase'&&t==='erase')||(id==='atMove'&&t==='move'));
+  });
+  document.getElementById('atPenOpts').style.display=(t==='pen')?'flex':'none';
+  document.getElementById('atHlOpts').style.display=(t==='hl')?'flex':'none';
+}
+document.getElementById('atPen').addEventListener('click', function(){ annSetTool('pen'); });
+document.getElementById('atHl').addEventListener('click', function(){ annSetTool('hl'); });
+document.getElementById('atErase').addEventListener('click', function(){ annSetTool('erase'); });
+document.getElementById('atMove').addEventListener('click', function(){ annSetTool('move'); });
+document.getElementById('atPenOpts').addEventListener('click', function(e){
+  var b=e.target.closest('button'); if(!b) return;
+  if(b.classList.contains('aw')){
+    ann.penW=parseFloat(b.getAttribute('data-w'));
+    document.querySelectorAll('#atPenOpts .aw').forEach(function(el){ el.classList.toggle('on', el===b); });
+  }else if(b.classList.contains('dot')){
+    ann.penC=b.getAttribute('data-c')||null;
+    document.querySelectorAll('#atPenOpts .dot').forEach(function(el){ el.classList.toggle('on', el===b); });
+  }
+});
+document.getElementById('atHlOpts').addEventListener('click', function(e){
+  var b=e.target.closest('button'); if(!b) return;
+  ann.hlC=b.getAttribute('data-c');
+  document.querySelectorAll('#atHlOpts .dot').forEach(function(el){ el.classList.toggle('on', el===b); });
+});
+document.getElementById('blockAnn').addEventListener('click', function(){
+  if(selItem && selItem.t==='img'){
+    var it=selItem;
+    selItem=null; blockRow.classList.remove('show');
+    annOpen(it);
+  }else{
+    nvMsg('目前只有照片可以加註記');
+  }
+});
+window.addEventListener('resize', function(){ if(ann.item){ annSize(); annClampView(); annRender(); } });
+
 /* ---------- block selection (tap on note) ---------- */
 noteCv.addEventListener('click', function(e){
   var r=noteCv.getBoundingClientRect();
@@ -1070,11 +1465,22 @@ noteCv.addEventListener('click', function(e){
   }
   selItem = hit;
   if(selItem){
+    /* double-tap on the same image → annotation editor */
+    var now=Date.now();
+    if(selItem.t==='img' && lastBlockTap.it===selItem && now-lastBlockTap.t<380){
+      var it2=selItem;
+      selItem=null; blockRow.classList.remove('show');
+      lastBlockTap={it:null,t:0};
+      annOpen(it2);
+      return;
+    }
+    lastBlockTap={it:selItem, t:now};
     blockSize.value = Math.round(selItem.dw*100);
     blockRow.classList.add('show');
     renderNote();
     return;
   }
+  lastBlockTap={it:null,t:0};
   blockRow.classList.remove('show');
 
   /* move cursor to the tapped position */
@@ -1561,7 +1967,11 @@ function idbDel(st,key){return new Promise(function(res,rej){var tx=db.transacti
 
 function serializeItems(){
   return items.map(function(it){
-    if(it.t==='img') return {t:'img', src:it.src, ar:it.ar, dw:it.dw};
+    if(it.t==='img'){
+      var o={t:'img', src:it.src, ar:it.ar, dw:it.dw};
+      if(it.ann && it.ann.length) o.ann=it.ann;
+      return o;
+    }
     return it;
   });
 }
@@ -1614,6 +2024,7 @@ function loadNote(rec){
   items=(rec.items||[]).map(function(it){
     if(it.t==='img'){
       var o={t:'img', src:it.src, ar:it.ar, dw:it.dw};
+      if(it.ann) o.ann=it.ann;
       var im=new Image();
       o._img=im;
       im.onload=function(){ renderNote(); };
