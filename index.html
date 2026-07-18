@@ -332,7 +332,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v39 畫記</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v40 畫記提速</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgMark">🖍</div>
@@ -465,6 +465,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 
 <div id="noteWrap">
   <canvas id="noteCanvas"></canvas>
+  <canvas id="markOverlay"></canvas>
   <div id="noteHint">手寫、打字、照片、塗鴉都會排進同一個筆記流，自動換行。<br>📷 插入照片｜🎨 切到塗鴉模式自由畫｜點一下圖塊可以調大小。</div>
 </div>
 
@@ -1597,7 +1598,25 @@ function mkEraseAt(q){
       out.push({p:thinPts(np, 0.002), c:st.c, wr:st.wr, hl:st.hl});
     }
   }
-  if(any){ noteMarks=out; renderNote(); }
+  if(any){ noteMarks=out; mkRenderSoon(); }
+}
+var mkRaf=0;
+function mkRenderSoon(){        /* eraser: at most one full re-render per frame */
+  if(mkRaf) return;
+  mkRaf=requestAnimationFrame(function(){ mkRaf=0; renderNote(); });
+}
+function mkSegment(x0,y0,x1,y1){ /* incremental: draw just the new bit, no relayout */
+  var w=noteWrap.clientWidth;
+  nctx.setTransform(DPR,0,0,DPR,0,0);
+  nctx.lineCap='round'; nctx.lineJoin='round';
+  nctx.strokeStyle=mark.cur.c||INK;
+  nctx.lineWidth=Math.max(1,(mark.cur.wr||0.006)*w);
+  nctx.globalAlpha = mark.cur.hl ? 0.14 : 1;   /* 螢光畫時淡一點，放開後定稿為正式樣子 */
+  nctx.beginPath();
+  nctx.moveTo(x0,y0);
+  nctx.lineTo(x1,y1);
+  nctx.stroke();
+  nctx.globalAlpha=1;
 }
 noteCv.addEventListener('pointerdown', function(e){
   if(!markOn() || mark.tool==='move') return;
@@ -1612,19 +1631,23 @@ noteCv.addEventListener('pointerdown', function(e){
     wr: hl ? 0.024 : 0.006,
     hl: hl||undefined
   };
-  renderNote();
+  var r=noteCv.getBoundingClientRect();
+  mark.lastPx={x:e.clientX-r.left, y:e.clientY-r.top};
 });
 noteCv.addEventListener('pointermove', function(e){
   if(!markOn()) return;
   if(mark.erasing){ e.preventDefault(); mkEraseAt(mkPos(e)); return; }
   if(!mark.cur) return;
   e.preventDefault();
+  var r=noteCv.getBoundingClientRect();
   var evs=e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
   for(var i=0;i<evs.length;i++){
     var q=mkPos(evs[i]);
     mark.cur.p.push({x:r3(q.x), y:r3(q.y), p:r2(pressureOf(evs[i]))});
+    var px={x:evs[i].clientX-r.left, y:evs[i].clientY-r.top};
+    mkSegment(mark.lastPx.x, mark.lastPx.y, px.x, px.y);
+    mark.lastPx=px;
   }
-  renderNote();
 });
 function mkUp(){
   mark.erasing=false;
