@@ -271,6 +271,16 @@ body.signedin #cvOut{display:none;}
 }
 .impActions .btn{flex:1 1 0;}
 
+#markRow{
+  display:none; flex-direction:column; gap:5px;
+  padding:7px 10px; background:#FDECEC;
+  font-size:12px;
+}
+body.marking #markRow{display:flex;}
+#markRow .mk.on{background:var(--accent-soft); color:#C4527A; font-weight:800;}
+body.marking.mkDraw #noteCanvas{touch-action:none;}
+body.marking #padWrap{display:none;}   /* 畫記時收起手寫板，讓出畫面 */
+
 #selRow{
   display:none; align-items:center; gap:5px;
   padding:7px 10px; background:#EBE7F7;
@@ -322,9 +332,10 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v38 螢光橡皮</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v39 畫記</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
+  <div class="pill" id="tgMark">🖍</div>
   <div class="pill" id="tgSel">✂️</div>
   <div class="pill" id="tgNotes">📚</div>
   <div class="pill on" id="tgAuto">自動送出</div>
@@ -487,6 +498,29 @@ body.doodling #padWrap{flex-basis:56vh;}
   </div>
 </div>
 
+<div id="markRow">
+  <div class="atLine">
+    <button class="btn mk on" id="mkPen">🖊 筆</button>
+    <button class="btn mk" id="mkHl">🖍 螢光</button>
+    <button class="btn mk" id="mkErase">🧽 橡皮</button>
+    <button class="btn mk" id="mkMove">✋ 捲動</button>
+    <button class="btn" id="mkUndo">復原</button>
+    <button class="btn primary" id="mkDone">完成</button>
+  </div>
+  <div class="atLine" id="mkPenOpts">
+    <button class="dot on" data-c="#D9534F" style="background:#D9534F"></button>
+    <button class="dot" data-c="" style="background:#4A4458"></button>
+    <button class="dot" data-c="#3E8A6C" style="background:#3E8A6C"></button>
+    <button class="dot" data-c="#5B7FD4" style="background:#5B7FD4"></button>
+    <button class="dot" data-c="#E88FA5" style="background:#E88FA5"></button>
+  </div>
+  <div class="atLine" id="mkHlOpts" style="display:none;">
+    <button class="dot on" data-c="#F4D03F" style="background:#F4D03F"></button>
+    <button class="dot" data-c="#F1948A" style="background:#F1948A"></button>
+    <button class="dot" data-c="#7DCEA0" style="background:#7DCEA0"></button>
+  </div>
+</div>
+
 <div id="selRow">
   <span id="selHint">點選開始位置</span>
   <button class="btn" id="selLine">選整行</button>
@@ -589,7 +623,7 @@ function thinPts(pts, minD){
 function compactRec(rec){
   var changed=false;
   (rec.items||[]).forEach(function(it){
-    if(it.t==='img' && it.ann){
+    if(it.ann){
       it.ann.forEach(function(st){
         if(!st.p) return;
         st.p.forEach(function(p){ p.x=r3(p.x); p.y=r3(p.y); p.p=r2(p.p); });
@@ -617,6 +651,15 @@ function compactRec(rec){
       });
     }
   });
+  if(rec.marks && rec.marks.length){
+    rec.marks.forEach(function(st){
+      if(!st.p) return;
+      st.p.forEach(function(p){ p.x=r3(p.x); p.y=r3(p.y); p.p=r2(p.p); });
+      var t=thinPts(st.p, 0.003);
+      if(t.length!==st.p.length){ st.p=t; }
+      changed=true;
+    });
+  }
   return changed;
 }
 function pressureOf(e){
@@ -679,6 +722,26 @@ function drawStrokeFlat(ctx, pts, map, width, color){
   }
   ctx.lineTo(prev.x, prev.y);
   ctx.stroke();
+}
+
+/* shared: draw an annotation stroke array over a block rect */
+function drawAnnOn(ctx, annArr, bx, by, bw, bh){
+  for(var ai=0; ai<annArr.length; ai++){
+    var ast=annArr[ai];
+    if(!ast.p) continue;
+    if(ast.hl){
+      ctx.globalAlpha=0.38;
+      drawStrokeFlat(ctx, ast.p, function(p){
+        return {x:bx + p.x*bw, y:by + p.y*bh};
+      }, Math.max(0.8, (ast.wr||0.028)*bw), ast.c||INK);
+      ctx.globalAlpha=1;
+      continue;
+    }
+    drawStroke(ctx, ast.p, function(p){
+      return {x:bx + p.x*bw, y:by + p.y*bh};
+    }, Math.max(0.8, (ast.wr||0.01)*bw), ast.c||INK);
+    ctx.globalAlpha=1;
+  }
 }
 
 /* ---------- note layout & render ---------- */
@@ -957,24 +1020,7 @@ function renderNote(){
       if(itm._img && itm._img.complete){
         nctx.drawImage(itm._img, q.x, q.y, q.w, q.h);
         if(itm.ann && itm.ann.length){
-          (function(bx,by,bw,bh){
-            for(var ai=0; ai<itm.ann.length; ai++){
-              var ast=itm.ann[ai];
-              if(!ast.p) continue;
-              if(ast.hl){
-                nctx.globalAlpha=0.38;
-                drawStrokeFlat(nctx, ast.p, function(p){
-                  return {x:bx + p.x*bw, y:by + p.y*bh};
-                }, Math.max(0.8, (ast.wr||0.028)*bw), ast.c||INK);
-                nctx.globalAlpha=1;
-                continue;
-              }
-              drawStroke(nctx, ast.p, function(p){
-                return {x:bx + p.x*bw, y:by + p.y*bh};
-              }, Math.max(0.8, (ast.wr||0.01)*bw), ast.c||INK);
-              nctx.globalAlpha=1;
-            }
-          })(q.x, q.y, q.w, q.h);
+          drawAnnOn(nctx, itm.ann, q.x, q.y, q.w, q.h);
         }
       }else{
         nctx.fillStyle='#F3EDE2';
@@ -1008,6 +1054,9 @@ function renderNote(){
           }, wB, col);
         }
       })(q.x, q.y, q.w, q.h);
+      if(itm.ann && itm.ann.length){
+        drawAnnOn(nctx, itm.ann, q.x, q.y, q.w, q.h);
+      }
     }
     if(q.block && itm===selItem){
       nctx.save();
@@ -1037,6 +1086,27 @@ function renderNote(){
     nctx.moveTo(cx+7, cy+ccs+4); nctx.lineTo(cx+7+cw, cy+ccs+4);
     nctx.stroke();
     nctx.setLineDash([]);
+  }
+
+  /* marking layer (畫記): drawn over everything, coords normalized by width */
+  if(noteMarks.length || (typeof mark!=='undefined' && mark.cur)){
+    var mAll=noteMarks.slice();
+    if(typeof mark!=='undefined' && mark.cur) mAll.push(mark.cur);
+    for(var mi=0; mi<mAll.length; mi++){
+      var mst=mAll[mi];
+      if(!mst.p || !mst.p.length) continue;
+      if(mst.hl){
+        nctx.globalAlpha=0.38;
+        drawStrokeFlat(nctx, mst.p, function(p){
+          return {x:p.x*wrapW, y:p.y*wrapW};
+        }, Math.max(1, (mst.wr||0.024)*wrapW), mst.c||INK);
+        nctx.globalAlpha=1;
+        continue;
+      }
+      drawStroke(nctx, mst.p, function(p){
+        return {x:p.x*wrapW, y:p.y*wrapW};
+      }, Math.max(1, (mst.wr||0.006)*wrapW), mst.c||INK);
+    }
   }
 
   noteHint.style.display = items.length ? 'none':'block';
@@ -1170,9 +1240,10 @@ var ann={
   pinch:null
 };
 function annOpen(item){
-  if(!item || item.t!=='img' || !item._img || !item._img.complete){
+  if(item && item.t==='img' && (!item._img || !item._img.complete)){
     nvMsg('照片還在載入中，稍等一下再試'); return;
   }
+  if(!item || (item.t!=='img' && item.t!=='doodle')) return;
   ann.item=item;
   ann.strokes=JSON.parse(JSON.stringify(item.ann||[]));
   ann.backup=JSON.parse(JSON.stringify(item.ann||[]));
@@ -1215,7 +1286,23 @@ function annRender(){
     actx.fillStyle='#EDE9E0';
     actx.fillRect(0,0,w,h);
     actx.setTransform(DPR*ann.scale,0,0,DPR*ann.scale,DPR*ann.tx,DPR*ann.ty);
-    actx.drawImage(ann.item._img, 0, 0, ann.baseW, ann.baseH);
+    if(ann.item.t==='img'){
+      actx.drawImage(ann.item._img, 0, 0, ann.baseW, ann.baseH);
+    }else{
+      /* doodle background: paper card + its vector strokes */
+      actx.fillStyle='#FFFFFF';
+      actx.fillRect(0, 0, ann.baseW, ann.baseH);
+      for(var di=0; di<ann.item.s.length; di++){
+        var dst=ann.item.s[di];
+        var old=Array.isArray(dst);
+        var dpts=old? dst : dst.p;
+        if(!dpts) continue;
+        drawStroke(actx, dpts, function(p){
+          return {x:p.x*ann.baseW, y:p.y*ann.baseH};
+        }, old? clamp(ann.baseW*0.011,1,2.6) : Math.max(0.8, (dst.wr||0.01)*ann.baseW),
+           old? INK : (dst.c||INK));
+      }
+    }
     var all=ann.strokes.slice();
     if(ann.cur) all.push(ann.cur);
     for(var i=0;i<all.length;i++){
@@ -1419,18 +1506,142 @@ document.getElementById('atHlOpts').addEventListener('click', function(e){
   document.querySelectorAll('#atHlOpts .dot').forEach(function(el){ el.classList.toggle('on', el===b); });
 });
 document.getElementById('blockAnn').addEventListener('click', function(){
-  if(selItem && selItem.t==='img'){
+  if(selItem && (selItem.t==='img' || selItem.t==='doodle')){
     var it=selItem;
     selItem=null; blockRow.classList.remove('show');
     annOpen(it);
-  }else{
-    nvMsg('目前只有照片可以加註記');
   }
 });
 window.addEventListener('resize', function(){ if(ann.item){ annSize(); annClampView(); annRender(); } });
 
+/* ---------- page-wide marking mode (畫記) ---------- */
+var mark={ tool:'pen', penC:'#D9534F', hlC:'#F4D03F', cur:null, ops:[], erasing:false };
+function markOn(){ return document.body.classList.contains('marking'); }
+function mkSyncDrawClass(){
+  document.body.classList.toggle('mkDraw', markOn() && mark.tool!=='move');
+}
+function setMark(v){
+  if(v===markOn()) return;
+  if(v){ commitGlyph(); setKb(false); if(selMode) exitSel(); }
+  document.body.classList.toggle('marking', v);
+  document.getElementById('tgMark').classList.toggle('on', v);
+  mark.cur=null; mark.erasing=false;
+  if(!v){ mark.ops=[]; }
+  mkSyncDrawClass();
+  setTimeout(layoutAll, 60);
+}
+document.getElementById('tgMark').addEventListener('click', function(){ setMark(!markOn()); });
+document.getElementById('mkDone').addEventListener('click', function(){ setMark(false); });
+function mkSetTool(t){
+  mark.tool=t;
+  ['mkPen','mkHl','mkErase','mkMove'].forEach(function(id){
+    document.getElementById(id).classList.toggle('on',
+      (id==='mkPen'&&t==='pen')||(id==='mkHl'&&t==='hl')||
+      (id==='mkErase'&&t==='erase')||(id==='mkMove'&&t==='move'));
+  });
+  document.getElementById('mkPenOpts').style.display=(t==='pen')?'flex':'none';
+  document.getElementById('mkHlOpts').style.display=(t==='hl')?'flex':'none';
+  mkSyncDrawClass();
+}
+document.getElementById('mkPen').addEventListener('click', function(){ mkSetTool('pen'); });
+document.getElementById('mkHl').addEventListener('click', function(){ mkSetTool('hl'); });
+document.getElementById('mkErase').addEventListener('click', function(){ mkSetTool('erase'); });
+document.getElementById('mkMove').addEventListener('click', function(){ mkSetTool('move'); });
+document.getElementById('mkPenOpts').addEventListener('click', function(e){
+  var b=e.target.closest('button'); if(!b) return;
+  mark.penC=b.getAttribute('data-c')||null;
+  document.querySelectorAll('#mkPenOpts .dot').forEach(function(el){ el.classList.toggle('on', el===b); });
+});
+document.getElementById('mkHlOpts').addEventListener('click', function(e){
+  var b=e.target.closest('button'); if(!b) return;
+  mark.hlC=b.getAttribute('data-c');
+  document.querySelectorAll('#mkHlOpts .dot').forEach(function(el){ el.classList.toggle('on', el===b); });
+});
+function mkPushUndo(){
+  mark.ops.push(JSON.parse(JSON.stringify(noteMarks)));
+  if(mark.ops.length>30) mark.ops.shift();
+}
+document.getElementById('mkUndo').addEventListener('click', function(){
+  if(!mark.ops.length) return;
+  noteMarks=mark.ops.pop();
+  renderNote();
+});
+function mkPos(e){
+  var r=noteCv.getBoundingClientRect();
+  var w=noteWrap.clientWidth;
+  return { x:(e.clientX-r.left)/w, y:(e.clientY-r.top)/w };   /* both normalized by width */
+}
+function mkEraseAt(q){
+  var w=noteWrap.clientWidth;
+  var R=16/w;
+  var out=[], any=false;
+  for(var i=0;i<noteMarks.length;i++){
+    var st=noteMarks[i];
+    var pts=annResample(st.p, R*0.6, 1);
+    var hitAny=false, runs=[], run=[];
+    for(var k=0;k<pts.length;k++){
+      var dx=pts[k].x-q.x, dy=pts[k].y-q.y;
+      if(dx*dx+dy*dy < R*R){
+        hitAny=true;
+        if(run.length){ runs.push(run); run=[]; }
+      }else{
+        run.push(pts[k]);
+      }
+    }
+    if(run.length) runs.push(run);
+    if(!hitAny){ out.push(st); continue; }
+    any=true;
+    for(var ri=0;ri<runs.length;ri++){
+      if(runs[ri].length<2) continue;
+      var np=runs[ri].map(function(p){ return {x:r3(p.x), y:r3(p.y), p:r2(p.p)}; });
+      out.push({p:thinPts(np, 0.002), c:st.c, wr:st.wr, hl:st.hl});
+    }
+  }
+  if(any){ noteMarks=out; renderNote(); }
+}
+noteCv.addEventListener('pointerdown', function(e){
+  if(!markOn() || mark.tool==='move') return;
+  e.preventDefault();
+  try{ noteCv.setPointerCapture(e.pointerId); }catch(err){}
+  var q=mkPos(e);
+  if(mark.tool==='erase'){ mkPushUndo(); mkEraseAt(q); mark.erasing=true; return; }
+  var hl=(mark.tool==='hl');
+  mark.cur={
+    p:[{x:r3(q.x), y:r3(q.y), p:r2(pressureOf(e))}],
+    c: hl ? mark.hlC : (mark.penC||INK),
+    wr: hl ? 0.024 : 0.006,
+    hl: hl||undefined
+  };
+  renderNote();
+});
+noteCv.addEventListener('pointermove', function(e){
+  if(!markOn()) return;
+  if(mark.erasing){ e.preventDefault(); mkEraseAt(mkPos(e)); return; }
+  if(!mark.cur) return;
+  e.preventDefault();
+  var evs=e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+  for(var i=0;i<evs.length;i++){
+    var q=mkPos(evs[i]);
+    mark.cur.p.push({x:r3(q.x), y:r3(q.y), p:r2(pressureOf(evs[i]))});
+  }
+  renderNote();
+});
+function mkUp(){
+  mark.erasing=false;
+  if(mark.cur){
+    mkPushUndo();
+    mark.cur.p=thinPts(mark.cur.p, 0.003);
+    noteMarks.push(mark.cur);
+    mark.cur=null;
+    renderNote();
+  }
+}
+noteCv.addEventListener('pointerup', function(e){ if(markOn()){ e.preventDefault(); mkUp(); } });
+noteCv.addEventListener('pointercancel', function(){ if(markOn()){ mark.cur=null; mark.erasing=false; } });
+
 /* ---------- block selection (tap on note) ---------- */
 noteCv.addEventListener('click', function(e){
+  if(markOn()) return;   /* 畫記模式：點擊由畫記引擎處理 */
   var r=noteCv.getBoundingClientRect();
   var x=e.clientX-r.left, y=e.clientY-r.top;
 
@@ -1467,7 +1678,7 @@ noteCv.addEventListener('click', function(e){
   if(selItem){
     /* double-tap on the same image → annotation editor */
     var now=Date.now();
-    if(selItem.t==='img' && lastBlockTap.it===selItem && now-lastBlockTap.t<380){
+    if((selItem.t==='img'||selItem.t==='doodle') && lastBlockTap.it===selItem && now-lastBlockTap.t<380){
       var it2=selItem;
       selItem=null; blockRow.classList.remove('show');
       lastBlockTap={it:null,t:0};
@@ -1832,6 +2043,7 @@ clearBtn.addEventListener('click', function(){
     return;
   }
   items=[]; cursor=0; pad.strokes=[]; pad.cur=null; pad.bbox=null; pad.activeCell=null;
+  noteMarks=[];
   headStyle.ls=null; headStyle.done=false; headStyle.ind=0;
   selItem=null; blockRow.classList.remove('show');
   clearArmed=false; clearBtn.textContent='清空';
@@ -1948,6 +2160,7 @@ typeIn.addEventListener('keydown', function(e){
 
 /* ---------- persistence (IndexedDB) & multiple notes ---------- */
 var db=null, curNoteId=null, curNoteName=null, saveTimer=null, loading=false;
+var noteMarks=[];   /* page-wide marking strokes (畫記層) */
 function idbOpen(){
   return new Promise(function(res,rej){
     var rq=indexedDB.open('hwNotes',1);
@@ -1995,6 +2208,7 @@ function saveNow(){
   var rec={
     id:curNoteId, items:serializeItems(),
     head:{ls:headStyle.ls, done:headStyle.done, ind:headStyle.ind||0},
+    marks:noteMarks.length?noteMarks:undefined,
     charSize:charSize, title:noteTitle(), name:curNoteName||null, updated:Date.now()
   };
   var p=idbPut('notes', rec).catch(function(){});
@@ -2018,6 +2232,7 @@ function loadNote(rec){
   curNoteName=rec.name||null;
   headStyle.ls=(rec.head&&rec.head.ls)||null;
   headStyle.done=!!(rec.head&&rec.head.done);
+  noteMarks=(rec.marks||[]).slice();
   headStyle.ind=(rec.head&&rec.head.ind)||0;
   charSize=rec.charSize||26;
   document.getElementById('sizeR').value=charSize;
@@ -2045,6 +2260,7 @@ function newNote(){
   saveNow();
   curNoteId='n'+Date.now().toString(36);
   curNoteName=null;
+  noteMarks=[];
   headStyle.ls=null; headStyle.done=false; headStyle.ind=0;
   items=[]; cursor=0;
   resetEditor();
