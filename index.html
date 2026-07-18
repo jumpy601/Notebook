@@ -332,7 +332,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v40 畫記提速</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v41 跨格字寬</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgMark">🖍</div>
@@ -634,12 +634,17 @@ function compactRec(rec){
       });
     }
     if(it.t==='g' && it.s){
+      var gMaxX=0;
       for(var si=0; si<it.s.length; si++){
         it.s[si].forEach(function(p){ p.x=r3(p.x); p.y=r3(p.y); p.p=r2(p.p); });
         var t=thinPts(it.s[si], 0.03);
         if(t.length!==it.s[si].length){ it.s[si]=t; }
+        it.s[si].forEach(function(p){ if(p.x>gMaxX) gMaxX=p.x; });
         changed=true;
       }
+      /* 依筆跡實際右緣重算字寬：修復被舊上限卡住的跨格字（如英文連寫） */
+      var adv2=clamp(gMaxX+0.11, 0.42, 2.6);
+      if(Math.abs(adv2-(it.adv||1))>0.03){ it.adv=r3(adv2); changed=true; }
     }else if(it.t==='doodle' && it.s){
       it.s.forEach(function(st){
         var arr=Array.isArray(st);
@@ -1846,7 +1851,7 @@ function commitGlyph(){
     });
     return thinPts(norm, 0.03);   /* drop points <2% of cell apart */
   });
-  var adv = clamp((maxX-minX)/pad.cellSize + 0.16, 0.42, 1.12);
+  var adv = clamp((maxX-minX)/pad.cellSize + 0.16, 0.42, pad.cells + 0.3);   /* 跨格連寫（英文）字寬照實計 */
   insertItem({t:'g', s:s, adv:adv});
   pad.strokes=[]; pad.cur=null; pad.bbox=null; pad.activeCell=null;
   renderPad(); renderNote(); scrollNoteBottom();
