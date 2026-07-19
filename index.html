@@ -280,6 +280,7 @@ body.marking #markRow{display:flex;}
 #markRow .mk.on{background:var(--accent-soft); color:#C4527A; font-weight:800;}
 body.marking.mkDraw #noteCanvas{touch-action:none;}
 body.marking #padWrap{display:none;}   /* 畫記時收起手寫板，讓出畫面 */
+body.marking #toolbar{display:none;}   /* 主工具列畫記時用不到，一併收起 */
 
 #selRow{
   display:none; align-items:center; gap:5px;
@@ -332,7 +333,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v42 PDF匯入</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v43 畫記穩定</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgMark">🖍</div>
@@ -1666,6 +1667,12 @@ function mkUp(){
 }
 noteCv.addEventListener('pointerup', function(e){ if(markOn()){ e.preventDefault(); mkUp(); } });
 noteCv.addEventListener('pointercancel', function(){ if(markOn()){ mark.cur=null; mark.erasing=false; } });
+/* iOS：畫記畫筆時擋掉原始 touch 捲動（touch-action 在部分 webview 不可靠） */
+['touchstart','touchmove','touchend'].forEach(function(ev){
+  noteCv.addEventListener(ev, function(e){
+    if(markOn() && mark.tool!=='move') e.preventDefault();
+  }, {passive:false});
+});
 
 /* ---------- block selection (tap on note) ---------- */
 noteCv.addEventListener('click', function(e){
