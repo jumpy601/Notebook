@@ -1,5 +1,5 @@
 /* 手寫小筆記 Service Worker */
-var CACHE = 'hwnote-v21';
+var CACHE = 'hwnote-v42';
 var ASSETS = [
   './',
   './index.html',
@@ -7,7 +7,9 @@ var ASSETS = [
   './huninn.woff2',
   './icon-180.png',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
+  './pdf.min.js',
+  './pdf.worker.min.js'
 ];
 
 self.addEventListener('install', function(e){

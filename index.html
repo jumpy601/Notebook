@@ -332,7 +332,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v41 跨格字寬</span></h1>
+  <h1>🐻 手寫小筆記 <span class="ver">v42 PDF匯入</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgMark">🖍</div>
@@ -547,7 +547,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <div id="toolbar">
   <div class="tbRow">
     <button class="btn primary" id="btnCommit">送出</button>
-    <button class="btn" id="btnPhoto">📷 照片</button>
+    <button class="btn" id="btnPhoto">📷 圖/PDF</button>
     <button class="btn" id="btnDoodle">🎨 塗鴉</button>
     <button class="btn" id="btnSpace">空格</button>
     <button class="btn" id="btnNl">換行</button>
@@ -567,7 +567,7 @@ body.doodling #padWrap{flex-basis:56vh;}
   <div id="padToast"></div>
 </div>
 
-<input type="file" id="imgIn" accept="image/*" style="display:none">
+<input type="file" id="imgIn" accept="image/*,application/pdf" style="display:none">
 
 <script>
 (function(){
@@ -1753,6 +1753,10 @@ imgIn.addEventListener('change', function(){
   var f=imgIn.files && imgIn.files[0];
   imgIn.value='';
   if(!f) return;
+  if(f.type==='application/pdf' || /\.pdf$/i.test(f.name||'')){
+    importPdf(f);
+    return;
+  }
   var rd=new FileReader();
   rd.onload=function(){
     var raw=new Image();
@@ -1777,6 +1781,74 @@ imgIn.addEventListener('change', function(){
   };
   rd.readAsDataURL(f);
 });
+
+/* ---------- PDF import (pdf.js, lazy-loaded) ---------- */
+var pdfJsReady=null;
+function loadPdfJs(){
+  if(window.pdfjsLib) return Promise.resolve();
+  if(pdfJsReady) return pdfJsReady;
+  pdfJsReady=new Promise(function(res, rej){
+    var s=document.createElement('script');
+    s.src='pdf.min.js';
+    s.onload=function(){
+      try{
+        pdfjsLib.GlobalWorkerOptions.workerSrc='pdf.worker.min.js';
+        res();
+      }catch(e){ rej(e); }
+    };
+    s.onerror=function(){ rej(new Error('pdf.js 載入失敗（repo 裡有 pdf.min.js 嗎？）')); };
+    document.head.appendChild(s);
+  });
+  return pdfJsReady;
+}
+var PDF_MAX_PAGES=20;
+function importPdf(file){
+  showPadToast('📄 讀取 PDF 中…');
+  loadPdfJs().then(function(){
+    return file.arrayBuffer();
+  }).then(function(buf){
+    return pdfjsLib.getDocument({data:buf}).promise;
+  }).then(function(doc){
+    var total=doc.numPages;
+    var maxP=Math.min(total, PDF_MAX_PAGES);
+    commitGlyph();
+    var chain=Promise.resolve();
+    for(var p=1; p<=maxP; p++){
+      (function(pn){
+        chain=chain.then(function(){
+          showPadToast('📄 轉換第 '+pn+' / '+maxP+' 頁…');
+          return doc.getPage(pn).then(function(page){
+            var vp1=page.getViewport({scale:1});
+            var scale=1100/vp1.width;
+            var vp=page.getViewport({scale:scale});
+            var oc=document.createElement('canvas');
+            oc.width=Math.round(vp.width);
+            oc.height=Math.round(vp.height);
+            return page.render({canvasContext:oc.getContext('2d'), viewport:vp}).promise
+              .then(function(){
+                var src=oc.toDataURL('image/jpeg', 0.78);
+                var img=new Image();
+                var item={t:'img', src:src, ar:oc.height/oc.width, dw:1.0, _img:img};
+                img.onload=function(){ renderNote(); };
+                img.src=src;
+                insertItem(item);
+              });
+          });
+        });
+      })(p);
+    }
+    return chain.then(function(){
+      renderNote(); scrollNoteBottom();
+      if(total>maxP){
+        showPadToast('📄 共 '+total+' 頁，已匯入前 '+maxP+' 頁（其餘請分段匯入）');
+      }else{
+        showPadToast('📄 已匯入 '+maxP+' 頁，點兩下任一頁可加註記');
+      }
+    });
+  }).catch(function(err){
+    showPadToast('📄 匯入失敗：'+((err&&err.message)||'未知錯誤'));
+  });
+}
 
 /* ---------- pad render ---------- */
 function sizePad(){
