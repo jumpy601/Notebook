@@ -359,7 +359,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1 id="appTitle" style="cursor:pointer;">🐻 手寫小筆記 <span class="ver">v44 刪除同步</span></h1>
+  <h1 id="appTitle" style="cursor:pointer;">🐻 手寫小筆記 <span class="ver">v47 開啟顯示列表</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgMark">🖍</div>
@@ -1224,13 +1224,14 @@ function updateSelUI(){
   var r=selRange();
   if(!selMode){ selRowEl.classList.remove('show'); return; }
   selRowEl.classList.add('show');
-  if(pastePhase) selHint.textContent='游標點到哪、就貼到哪';
+  if(pastePhase) selHint.textContent='游標點到哪、按📌貼上就貼到哪';
   else if(r) selHint.textContent='已選 '+(r[1]-r[0])+' 項';
   else if(selA!==null) selHint.textContent='點選結束位置';
   else selHint.textContent='點選開始位置';
 }
 function enterSel(){
-  selMode=true; selA=null; selB=null; pastePhase=false;
+  selMode=true; selA=null; selB=null;
+  pastePhase = !!(clipboard && clipboard.length);   /* 帶著剪貼簿進來(可能剛換筆記本) → 直接可貼 */
   selItem=null; blockRow.classList.remove('show');
   updateSelUI(); renderNote();
 }
@@ -1254,7 +1255,7 @@ document.getElementById('selCut').addEventListener('click', function(){
   cursor=r[0];
   selA=null; selB=null; pastePhase=true;
   renderNote(); scrollNoteBottom(); updateSelUI();
-  selHint.textContent='已剪下 '+clipboard.length+' 項，點好位置後按貼上';
+  selHint.textContent='已剪下 '+clipboard.length+' 項，可換筆記本再貼上';
 });
 document.getElementById('selCopy').addEventListener('click', function(){
   var r=selRange(); if(!r){ selHint.textContent='請先選好範圍（點兩處或按選整行）'; return; }
@@ -2010,11 +2011,16 @@ function commitDoodle(){
 
 /* ---------- pad pointer ---------- */
 var raf=0;
-function scheduleRender(){
+function scheduleRender(){        /* full: pad + note preview (used at stroke end / commit) */
   if(raf) return;
   raf=requestAnimationFrame(function(){
     raf=0; renderPad(); renderNote();
   });
+}
+var padRaf=0;
+function schedulePadOnly(){       /* during a stroke: only the pad, so long notes don't lag */
+  if(padRaf) return;
+  padRaf=requestAnimationFrame(function(){ padRaf=0; renderPad(); });
 }
 function padPos(e){
   var r=padCv.getBoundingClientRect();
@@ -2063,7 +2069,7 @@ padCv.addEventListener('pointermove', function(e){
     var q=padPos(evs[i]);
     pad.cur.pts.push({x:q.x,y:q.y,p:pressureOf(evs[i])});
   }
-  scheduleRender();
+  schedulePadOnly();   /* 寫的當下只重畫格子(即時)，筆記預覽等放手才更新 */
 });
 function endStroke(){
   if(!pad.cur) return;
@@ -2355,18 +2361,23 @@ function noteTitle(){
   }
   return '（空白筆記）';
 }
-function saveNow(){
+function saveNow(keepTs){
   if(!db || !curNoteId || loading) return Promise.resolve();
   var rec={
     id:curNoteId, items:serializeItems(),
     head:{ls:headStyle.ls, done:headStyle.done, ind:headStyle.ind||0},
     marks:noteMarks.length?noteMarks:undefined,
-    charSize:charSize, title:noteTitle(), name:curNoteName||null, updated:Date.now()
+    charSize:charSize, title:noteTitle(), name:curNoteName||null,
+    updated: keptTsGuard(keepTs)
   };
   var p=idbPut('notes', rec).catch(function(){});
   idbPut('meta',{k:'lastId', v:curNoteId}).catch(function(){});
   cloudPushSoon(rec);
   return p;
+}
+function keptTsGuard(keepTs){
+  /* keepTs: preserve an existing timestamp (compaction/migration); else stamp now */
+  return (typeof keepTs==='number' && keepTs>0) ? keepTs : Date.now();
 }
 function saveSoon(){ clearTimeout(saveTimer); saveTimer=setTimeout(saveNow, 900); }
 
@@ -2406,7 +2417,7 @@ function loadNote(rec){
   renderNote(); renderPad();
   noteWrap.scrollTop=0;
   if(db) idbPut('meta',{k:'lastId', v:curNoteId}).catch(function(){});
-  if(didCompact){ saveNow(); }   /* write back the slimmed strokes (also re-pushes to cloud) */
+  if(didCompact){ saveNow(rec.updated); }   /* write back slimmed strokes but KEEP original timestamp */
 }
 function newNote(){
   saveNow();
@@ -2514,6 +2525,7 @@ document.getElementById('tgNotes').addEventListener('click', function(){
   notesView.classList.add('show');
 });
 document.getElementById('nvClose').addEventListener('click', function(){
+  if(!curNoteId){ newNote(); }   /* nothing open → don't close into a blank screen */
   notesView.classList.remove('show');
 });
 document.getElementById('nvNew').addEventListener('click', function(){
@@ -2521,18 +2533,20 @@ document.getElementById('nvNew').addEventListener('click', function(){
   notesView.classList.remove('show');
 });
 
-/* startup: open DB, restore last note */
+/* startup: open DB, then show the notes list (do NOT auto-open a note — safer) */
 idbOpen().then(function(d){
   db=d;
-  return idbGet('meta','lastId');
-}).then(function(m){
-  if(m && m.v) return idbGet('notes', m.v);
-  return null;
-}).then(function(rec){
-  if(rec) loadNote(rec);
-  else newNote();
+  return idbAll('notes');
+}).then(function(list){
+  curNoteId=null;            /* nothing open → no stray autosave can clobber a note */
+  items=[]; noteMarks=[];
+  if(list && list.length){
+    refreshNotesList();
+    notesView.classList.add('show');   /* land on the list */
+  }else{
+    newNote();                          /* empty app → start a fresh note */
+  }
 }).catch(function(){
-  /* storage unavailable (e.g. restricted webview) — run in-memory */
   db=null;
   curNoteId='n'+Date.now().toString(36);
 });
@@ -2935,7 +2949,7 @@ function addTombstone(id){
   });
 }
 
-function syncNow(){
+function syncNow(silent){
   if(!fb.user || syncBusy || !db) return;
   syncBusy=true;
   setCloudUI('sync','☁️ 同步中…');
@@ -2959,7 +2973,14 @@ function syncNow(){
       if(!l){ pulls.push(c); return; }                 /* cloud-only → pull */
       if(c.updated===l.updated){ bases[id]=c.updated; return; }
       var localChanged = l.updated>b, cloudChanged = c.updated>b;
-      if(localChanged && cloudChanged){ conflicts.push({mine:l, theirs:c, restore:false}); }
+      if(localChanged && cloudChanged){
+        if(silent){
+          /* auto-sync: don't interrupt — newest wins */
+          if(c.updated>=l.updated) pulls.push(c); else pushes.push(l);
+        }else{
+          conflicts.push({mine:l, theirs:c, restore:false});
+        }
+      }
       else if(cloudChanged){ pulls.push(c); }
       else if(localChanged){ pushes.push(l); }
       else if(c.updated>l.updated){ pulls.push(c); }   /* base lost → newer wins */
@@ -3075,7 +3096,7 @@ if(window.firebase && FB_CONFIG.apiKey && FB_CONFIG.apiKey.indexOf('AIza')===0){
           }).then(function(){ newNote(); });
         }
         pre.then(function(){ return metaSetV('lastUid', user.uid); })
-           .then(function(){ syncNow(); });
+           .then(function(){ syncNow(true); });
       });
     });
   }catch(e){ fb.enabled=false; setCloudUI('off','☁️ 雲端初始化失敗'); }
@@ -3122,7 +3143,7 @@ document.getElementById('cloudLogout').addEventListener('click', function(){
   if(fb.auth) fb.auth.signOut();
   setCloudUI('off','☁️ 已登出（本機筆記保留）');
 });
-document.getElementById('cloudSync').addEventListener('click', syncNow);
+document.getElementById('cloudSync').addEventListener('click', function(){ syncNow(false); });
 document.getElementById('cloudUpload').addEventListener('click', function(){
   var up=document.getElementById('cloudUpload');
   up.style.display='none';
@@ -3133,10 +3154,30 @@ document.getElementById('cloudUpload').addEventListener('click', function(){
   });
 });
 /* resync when app returns to foreground or network comes back (throttled) */
+function flushPending(){
+  /* commit any debounced save + push right now, before we might be frozen/closed */
+  clearTimeout(saveTimer);
+  clearTimeout(cloudTimer);
+  if(!db || !curNoteId || loading) return;
+  var rec={
+    id:curNoteId, items:serializeItems(),
+    head:{ls:headStyle.ls, done:headStyle.done, ind:headStyle.ind||0},
+    marks:noteMarks.length?noteMarks:undefined,
+    charSize:charSize, title:noteTitle(), name:curNoteName||null, updated:Date.now()
+  };
+  idbPut('notes', rec).catch(function(){});
+  idbPut('meta',{k:'lastId', v:curNoteId}).catch(function(){});
+  if(fb.user) pushNote(rec);   /* fire immediately, not debounced */
+}
 document.addEventListener('visibilitychange', function(){
-  if(!document.hidden && fb.user && Date.now()-lastSyncAt>30000) syncNow();
+  if(document.hidden){
+    flushPending();
+  }else if(fb.user && Date.now()-lastSyncAt>30000){
+    syncNow(true);
+  }
 });
-window.addEventListener('online', function(){ if(fb.user) syncNow(); });
+window.addEventListener('pagehide', flushPending);
+window.addEventListener('online', function(){ if(fb.user) syncNow(true); });
 
 /* ---------- intro overlay ---------- */
 var introView=document.getElementById('introView');
