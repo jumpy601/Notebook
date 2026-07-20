@@ -199,6 +199,32 @@ body.kb #blockRow, body.kb #styleRow, body.kb #selRow, body.kb #toolbar{order:-1
 .pill.cloudon{background:var(--mint-soft); color:#3E8A6C; border-color:var(--mint);}
 .pill.cloudsync{background:#FFF3D6; color:#B07D2B; border-color:#F2DCA0;}
 
+#introView{
+  position:fixed; inset:0; z-index:80;
+  background:rgba(74,68,88,0.45);
+  display:none; align-items:center; justify-content:center;
+  padding:16px; padding-top:calc(16px + env(safe-area-inset-top));
+}
+#introView.show{display:flex;}
+.ivCard{
+  background:var(--paper); border-radius:22px;
+  max-width:440px; width:100%; max-height:88vh; overflow-y:auto;
+  padding:20px 18px calc(18px + env(safe-area-inset-bottom));
+  box-shadow:0 12px 40px rgba(74,68,88,0.3);
+}
+.ivHead{font-size:19px; font-weight:800; text-align:center; margin-bottom:14px;}
+.ivBody{font-size:13px; line-height:1.5;}
+.ivItem{
+  background:#fff; border:1.5px solid var(--accent-soft);
+  border-radius:14px; padding:10px 12px; margin-bottom:8px;
+}
+.ivItem b{color:var(--accent); margin-right:4px;}
+.ivTip{
+  background:var(--mint-soft); border-radius:12px;
+  padding:10px 12px; margin:12px 0 4px; color:#3E8A6C; font-size:12px;
+}
+.ivCard .btn.primary{width:100%; padding:12px; margin-top:12px; font-size:15px;}
+
 #annView{
   position:fixed; inset:0; z-index:70;
   background:#EDE9E0;
@@ -333,7 +359,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1>🐻 手寫小筆記 <span class="ver">v43 畫記穩定</span></h1>
+  <h1 id="appTitle" style="cursor:pointer;">🐻 手寫小筆記 <span class="ver">v44 刪除同步</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgMark">🖍</div>
@@ -381,6 +407,25 @@ body.doodling #padWrap{flex-basis:56vh;}
   </div>
 </div>
 <input type="file" id="impIn" accept=".json,application/json" style="display:none">
+
+<div id="introView">
+  <div class="ivCard">
+    <div class="ivHead">🐻 歡迎使用手寫小筆記！</div>
+    <div class="ivBody">
+      <div class="ivItem"><b>✍️ 手寫</b>在下方格子裡寫字，會自動縮小排進筆記，跨格連寫英文也可以。</div>
+      <div class="ivItem"><b>⌨️ 打字</b>右上「鍵盤」直接打字進筆記，中英混排自動換行。</div>
+      <div class="ivItem"><b>📷 圖/PDF</b>插入照片或匯入 PDF（每頁變成一頁圖）。<b>點兩下</b>任何圖或 PDF 頁，可以放大加註記、劃螢光重點。</div>
+      <div class="ivItem"><b>🎨 塗鴉</b>切換大畫板自由畫，可選粗細和顏色。</div>
+      <div class="ivItem"><b>✨ 樣式</b>項目符號、待辦勾選框（點框打勾）、大標、縮排、標籤貼紙。</div>
+      <div class="ivItem"><b>🖍 畫記</b>在寫好的筆記上直接畫圈、打星號、劃重點。</div>
+      <div class="ivItem"><b>✂️ 選取</b>選一段內容剪下/複製，貼到別的位置或別篇筆記。</div>
+      <div class="ivItem"><b>📚 筆記櫃</b>多篇筆記、命名、備份匯出匯入。</div>
+      <div class="ivItem"><b>☁️ 雲端</b>登入帳號後自動同步，換裝置接著寫，離線也能用。</div>
+      <div class="ivTip">💡 之後點左上角的 🐻 標題，隨時可以再看這頁。</div>
+    </div>
+    <button class="btn primary" id="ivClose">開始使用 🎀</button>
+  </div>
+</div>
 
 <div id="annView">
   <div class="nvHead">
@@ -2920,7 +2965,18 @@ function syncNow(){
       else if(c.updated>l.updated){ pulls.push(c); }   /* base lost → newer wins */
       else{ pushes.push(l); }
     });
-    var localOnly=locals.filter(function(l){ return !clouds[l.id] && tomb.indexOf(l.id)===-1; });
+    /* local notes absent from cloud: split into "deleted elsewhere" vs "genuinely new" */
+    var deletedElsewhere=[], localOnly=[];
+    locals.forEach(function(l){
+      if(clouds[l.id] || tomb.indexOf(l.id)!==-1) return;
+      if(bases[l.id]!==undefined){
+        /* was synced before (has a base) but cloud no longer has it → deleted on another device */
+        deletedElsewhere.push(l);
+      }else{
+        /* never synced → a real new note on this device */
+        localOnly.push(l);
+      }
+    });
     /* first cloud use: empty cloud + local notes → explicit consent, never auto-push */
     if(!cloudSnap.size && localOnly.length && !Object.keys(bases).length){
       chain.then(function(){ metaSetV('tombstones',[]); });
@@ -2932,6 +2988,16 @@ function syncNow(){
       return;
     }
     localOnly.forEach(function(l){ pushes.push(l); }); /* merge local-only notes up */
+    /* propagate remote deletions to this device */
+    var reloadAfterDel=false;
+    deletedElsewhere.forEach(function(l){
+      chain=chain.then(function(){
+        return idbDel('notes', l.id).then(function(){
+          delete bases[l.id];
+          if(l.id===curNoteId) reloadAfterDel=true;
+        });
+      });
+    });
     pulls.forEach(function(c){
       chain=chain.then(function(){ return inflateNote(c); })
                  .then(function(rec){
@@ -2962,6 +3028,15 @@ function syncNow(){
           clearTimeout(saveTimer);
           return idbGet('notes', curNoteId).then(function(fresh){
             if(fresh) loadNote(fresh);
+            fin();
+          });
+        }
+        if(reloadAfterDel){
+          /* the note we had open was deleted elsewhere → open another or start fresh */
+          clearTimeout(saveTimer);
+          return idbAll('notes').then(function(list){
+            list.sort(function(a,b){ return (b.updated||0)-(a.updated||0); });
+            if(list.length) loadNote(list[0]); else newNote();
             fin();
           });
         }
@@ -3062,6 +3137,18 @@ document.addEventListener('visibilitychange', function(){
   if(!document.hidden && fb.user && Date.now()-lastSyncAt>30000) syncNow();
 });
 window.addEventListener('online', function(){ if(fb.user) syncNow(); });
+
+/* ---------- intro overlay ---------- */
+var introView=document.getElementById('introView');
+function showIntro(){ introView.classList.add('show'); }
+document.getElementById('ivClose').addEventListener('click', function(){
+  introView.classList.remove('show');
+  try{ localStorage.setItem('hwnote_introSeen','1'); }catch(e){}
+});
+document.getElementById('appTitle').addEventListener('click', showIntro);
+try{
+  if(localStorage.getItem('hwnote_introSeen')!=='1') setTimeout(showIntro, 400);
+}catch(e){}
 
 /* ---------- offline: register service worker ---------- */
 if('serviceWorker' in navigator){
