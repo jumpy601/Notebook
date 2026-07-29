@@ -359,7 +359,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1 id="appTitle" style="cursor:pointer;">🐻 手寫小筆記 <span class="ver">v47 開啟顯示列表</span></h1>
+  <h1 id="appTitle" style="cursor:pointer;">🐻 手寫小筆記 <span class="ver">v48 效能診斷</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgMark">🖍</div>
@@ -857,6 +857,7 @@ function roundRectPath(ctx,x,y,w,h,r){
 var lastCursorY = 12;
 
 function renderNote(){
+  var __t0=performance.now();
   var pg = buildPreviewGlyph();
   var list = items.slice();
   if(pg) list.splice(cursor, 0, pg);
@@ -1163,6 +1164,8 @@ function renderNote(){
 
   noteHint.style.display = items.length ? 'none':'block';
   if(!loading) saveSoon();   /* autosave: any rendered change persists ~1s later */
+  var __dt=performance.now()-__t0;
+  if(__dt>20){ padHint.textContent='⏱ '+Math.round(__dt)+'ms｜字'+items.length+' 記'+noteMarks.length; padHint.style.display='block'; }
 }
 
 function scrollNoteBottom(){
