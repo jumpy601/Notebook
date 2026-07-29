@@ -359,7 +359,7 @@ body.doodling #padWrap{flex-basis:56vh;}
 <body>
 
 <header>
-  <h1 id="appTitle" style="cursor:pointer;">🐻 手寫小筆記 <span class="ver">v48 效能診斷</span></h1>
+  <h1 id="appTitle" style="cursor:pointer;">🐻 手寫小筆記 <span class="ver">v49 長筆記提速</span></h1>
   <div class="spacer"></div>
   <div class="pill" id="tgCloud">☁️</div>
   <div class="pill" id="tgMark">🖍</div>
@@ -857,7 +857,6 @@ function roundRectPath(ctx,x,y,w,h,r){
 var lastCursorY = 12;
 
 function renderNote(){
-  var __t0=performance.now();
   var pg = buildPreviewGlyph();
   var list = items.slice();
   if(pg) list.splice(cursor, 0, pg);
@@ -990,8 +989,10 @@ function renderNote(){
   });
   var decoLH = Math.round(charSize*1.55);
   for(var dy = cy + decoLH + charSize + 6; dy < needH; dy += decoLH){ ruled[dy]=1; }
+  var rvTop=noteWrap.scrollTop - 40, rvBot=noteWrap.scrollTop + noteWrap.clientHeight + 40;
   Object.keys(ruled).forEach(function(k){
     var ry=parseInt(k,10);
+    if(ry < rvTop || ry > rvBot) return;   /* offscreen rule → skip */
     nctx.beginPath(); nctx.moveTo(margin-4, ry+0.5); nctx.lineTo(wrapW-margin+4, ry+0.5); nctx.stroke();
   });
   nctx.setLineDash([]);
@@ -1051,10 +1052,13 @@ function renderNote(){
     }
   }
 
-  /* items */
+  /* items — cull to the visible scroll band so long notes render at constant cost */
+  var vTop=noteWrap.scrollTop - 40, vBot=noteWrap.scrollTop + noteWrap.clientHeight + 40;
   nctx.textBaseline='top';
   for(var j=0;j<draw.length;j++){
     var q=draw[j], itm=q.it;
+    var qh=q.h || (q.cs||charSize)*1.4;
+    if(q.y > vBot || q.y+qh < vTop) continue;   /* offscreen → skip */
     if(itm.t==='ch'){
       nctx.globalAlpha=1; nctx.fillStyle=INK;
       setFont(q.cs, q.h1);
@@ -1164,8 +1168,6 @@ function renderNote(){
 
   noteHint.style.display = items.length ? 'none':'block';
   if(!loading) saveSoon();   /* autosave: any rendered change persists ~1s later */
-  var __dt=performance.now()-__t0;
-  if(__dt>20){ padHint.textContent='⏱ '+Math.round(__dt)+'ms｜字'+items.length+' 記'+noteMarks.length; padHint.style.display='block'; }
 }
 
 function scrollNoteBottom(){
